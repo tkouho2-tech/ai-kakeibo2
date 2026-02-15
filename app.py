@@ -272,7 +272,7 @@ def show_home(username):
 
     with col2:
         st.info("📁 保存済みの画像/動画を選択")
-        if st.button("ファイルを選択する", use_container_width=True, type="primary"):
+        if st.button("写真orファイル選択", use_container_width=True, type="primary"):
             st.session_state.current_view = 'upload'
             st.rerun()
             
