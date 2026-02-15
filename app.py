@@ -283,7 +283,7 @@ def show_home(username):
             st.rerun()
 
 def show_file_input(model_name):
-    st.header("📁 ファイル選択")
+    st.header("📁 写真またはファイル選択")
     if st.button("🏠 ホームに戻る"):
         st.session_state.current_view = 'home'
         st.rerun()
