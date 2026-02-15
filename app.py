@@ -4,275 +4,432 @@ import sqlite3
 import google.generativeai as genai
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import tempfile
 import time
+import bcrypt
+import plotly.express as px
 
 # --- 1. アプリケーション設定 ---
 st.set_page_config(
-    page_title="AI家計簿アプリ",
+    page_title="IA家計簿 Pro",
     page_icon="💰",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-DB_FILE = "kakeibo.db"
+DB_FILE = "ai_kakeibo_pro.db"
 
 # --- 2. データベース機能 ---
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    
+    # Users
     c.execute("""
-        CREATE TABLE IF NOT EXISTS receipt_data (
+        CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash BLOB NOT NULL
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_username ON users(username)")
+    
+    # Receipts (1年分の詳細)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS receipts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
             year_month TEXT,
             date TEXT,
-            location TEXT,
-            sequence_num INTEGER,
+            shop TEXT,
+            seq_no INTEGER,
             item_name TEXT,
             category TEXT,
             price INTEGER,
-            cumulative_price INTEGER
+            cumulative_price INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id)
         )
     """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_mid_date ON receipts(user_id, date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_mid_ym ON receipts(user_id, year_month)")
+    
+    # Yearly History (30年保存)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS yearly_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            year TEXT,
+            category TEXT,
+            total_amount INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_yh_mid_year ON yearly_history(user_id, year)")
+    
     conn.commit()
     conn.close()
 
-def save_to_db(df):
+def get_db():
     conn = sqlite3.connect(DB_FILE)
-    # DataFrameをそのままDBへ追記
-    df.to_sql("receipt_data", conn, if_exists="append", index=False)
-    conn.close()
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def load_data():
-    conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql("SELECT * FROM receipt_data", conn)
-    conn.close()
-    return df
+# --- 3. 認証システム ---
+def check_password(password, hashed):
+    return bcrypt.checkpw(password.encode('utf-8'), hashed)
 
-# --- 3. Gemini API連携 ---
+def hash_password(password):
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+
+def login_page():
+    st.title("🔐 AI家計簿 Pro - Login")
+    tab1, tab2 = st.tabs(["ログイン", "新規登録"])
+    
+    with tab1:
+        with st.form("login"):
+            user = st.text_input("Username")
+            pw = st.text_input("Password", type="password")
+            if st.form_submit_button("ログイン", use_container_width=True):
+                conn = get_db()
+                c = conn.cursor()
+                c.execute("SELECT * FROM users WHERE username = ?", (user,))
+                u = c.fetchone()
+                conn.close()
+                if u and check_password(pw, u['password_hash']):
+                    st.session_state.user_id = u['id']
+                    st.session_state.username = u['username']
+                    # 初期画面はホーム
+                    st.session_state.current_view = 'home'
+                    st.rerun()
+                else:
+                    st.error("認証失敗")
+    
+    with tab2:
+        with st.form("register"):
+            new_user = st.text_input("New Username")
+            new_pw = st.text_input("New Password", type="password")
+            if st.form_submit_button("登録", use_container_width=True):
+                if new_user and new_pw:
+                    try:
+                        conn = get_db()
+                        c = conn.cursor()
+                        c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", 
+                                  (new_user, hash_password(new_pw)))
+                        conn.commit()
+                        conn.close()
+                        st.success("登録完了。ログインしてください。")
+                    except:
+                        st.error("そのユーザー名は既に使用されています。")
+
+# --- 4. 自動集計ロジック (Yearly Aggregation) ---
+def check_and_aggregate_yearly(user_id, receipt_date_str):
+    try:
+        dt = datetime.strptime(receipt_date_str, "%Y/%m/%d")
+        if dt.month == 1:
+            target_year = str(dt.year - 1)
+            conn = get_db()
+            c = conn.cursor()
+            
+            c.execute("SELECT 1 FROM yearly_history WHERE user_id = ? AND year = ?", (user_id, target_year))
+            if not c.fetchone():
+                c.execute("""
+                    INSERT INTO yearly_history (user_id, year, category, total_amount)
+                    SELECT user_id, substr(date, 1, 4) as year, category, SUM(price)
+                    FROM receipts
+                    WHERE user_id = ? AND substr(date, 1, 4) = ?
+                    GROUP BY category
+                """, (user_id, target_year))
+                conn.commit()
+                if c.rowcount > 0:
+                    st.toast(f"📅 前年({target_year})のデータを自動集計しました。")
+            conn.close()
+    except Exception as e:
+        print(f"Aggregation Error: {e}")
+
+# --- 5. AI解析 & データ保存 ---
 def configure_genai():
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key and "GEMINI_API_KEY" in st.secrets:
         api_key = st.secrets["GEMINI_API_KEY"]
-    
-    if not api_key:
-        st.error("Gemini APIキーが設定されていません。st.secretsまたは環境変数を確認してください。")
-        st.stop()
-    
-    genai.configure(api_key=api_key)
+    if api_key:
+        genai.configure(api_key=api_key)
 
-def analyze_receipt(model_name, uploaded_file):
-    # 一時ファイルとして保存
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
-        tmp_file.write(uploaded_file.getvalue())
-        tmp_path = tmp_file.name
+def analyze_and_save(model_name, uploaded_file):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
+        tmp.write(uploaded_file.getvalue())
+        tmp_path = tmp.name
 
     try:
-        # ファイルアップロード
         myfile = genai.upload_file(tmp_path)
-        
-        # 動画の場合は処理完了を待機
         while myfile.state.name == "PROCESSING":
-            time.sleep(2)
+            time.sleep(1)
             myfile = genai.get_file(myfile.name)
-
+            
         model = genai.GenerativeModel(model_name)
-        
         prompt = """
-        レシートの画像を解析し、以下の情報をJSON形式で抽出してください。
+        レシート画像を解析し、以下のJSON形式(List)のみを出力してください。
         
-        **出力フォーマット (JSON List):**
         [
             {
                 "date": "YYYY/MM/DD", 
-                "location": "店舗名",
+                "shop": "店舗名",
                 "items": [
-                    {"name": "商品名", "category": "カテゴリ", "price": 価格(数値)}
+                    {"name": "商品名", "category": "カテゴリ", "price": 数値}
                 ]
             }
         ]
         
-        **ルール:**
-        1. 日付はYYYY/MM/DD形式に統一してください。不明な場合は本日の日付を使用してください。
-        2. カテゴリについて:
-           - 「飲料」または「嗜好品」と思われるものは、必ず「食料品」として出力してください。
-           - それ以外は一般的な家計簿カテゴリ（例: 食料品, 日用品, 交通費, 衣服, 交際費 等）を推測してください。
-        3. 価格はエン記号などを除いた整数値にしてください。
-        4. 画像内に複数のレシートがある場合は、リスト形式で複数のオブジェクトを返してください。
+        **ルール**
+        1. 日付不明は本日。
+        2. カテゴリ分類: 「飲料」「嗜好品」「酒」「お菓子」は必ず【食料品】に変換。
+        3. 価格は数値のみ。
         """
-
-        response = model.generate_content(
-            [myfile, prompt],
-            generation_config={"response_mime_type": "application/json"}
-        )
         
-        return json.loads(response.text)
-
+        res = model.generate_content([myfile, prompt], generation_config={"response_mime_type": "application/json"})
+        parsed = json.loads(res.text)
+        
+        conn = get_db()
+        c = conn.cursor()
+        user_id = st.session_state.user_id
+        
+        for receipt in parsed:
+            date_str = receipt.get("date", datetime.now().strftime("%Y/%m/%d"))
+            shop = receipt.get("shop", "不明")
+            year_month = datetime.strptime(date_str, "%Y/%m/%d").strftime("%Y/%m") if date_str else "Unknown"
+            
+            curr_cumulative = 0
+            
+            for idx, item in enumerate(receipt.get("items", []), 1):
+                price = int(item.get("price", 0))
+                cat = item.get("category", "その他")
+                if cat in ["飲料", "嗜好品"]: cat = "食料品"
+                
+                curr_cumulative += price
+                
+                c.execute("""
+                    INSERT INTO receipts (user_id, year_month, date, shop, seq_no, item_name, category, price, cumulative_price)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (user_id, year_month, date_str, shop, idx, item.get("name"), cat, price, curr_cumulative))
+            
+            check_and_aggregate_yearly(user_id, date_str)
+            
+        conn.commit()
+        conn.close()
+        return True
+        
     except Exception as e:
-        st.error(f"解析エラー: {e}")
-        return None
+        st.error(f"Error: {e}")
+        return False
     finally:
-        # 一時ファイルの削除
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        if os.path.exists(tmp_path): os.remove(tmp_path)
 
-# --- 4. データ加工 ---
-def process_extracted_data(extracted_json):
-    rows = []
+# --- 6. 画面コンポーネント ---
+
+def show_home(username):
+    st.title("🏠 AI家計簿 Pro - ホーム")
+    st.write(f"ようこそ、**{username}** さん")
     
-    for receipt in extracted_json:
-        date_str = receipt.get("date", datetime.now().strftime("%Y/%m/%d"))
-        location = receipt.get("location", "不明")
-        try:
-            year_month = datetime.strptime(date_str, "%Y/%m/%d").strftime("%Y/%m")
-        except:
-            year_month = datetime.now().strftime("%Y/%m") # パース失敗時のフォールバック
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.info("📷 レシートを撮影して登録")
+        if st.button("カメラで撮影する", use_container_width=True, type="primary"):
+            st.session_state.current_view = 'camera'
+            st.rerun()
+            
+    with col2:
+        st.info("📁 保存済みの画像/動画を選択")
+        if st.button("ファイルを選択する", use_container_width=True, type="primary"):
+            st.session_state.current_view = 'upload'
+            st.rerun()
+            
+    with col3:
+        st.info("📊 家計簿データを確認")
+        if st.button("グラフ・集計を見る", use_container_width=True, type="primary"):
+            st.session_state.current_view = 'dashboard'
+            st.rerun()
 
-        current_cumulative = 0
-        for idx, item in enumerate(receipt.get("items", []), 1):
-            price = int(item.get("price", 0))
-            category = item.get("category", "未分類")
-            
-            # カテゴリ正規化 (念のため再確認)
-            if category in ["飲料", "嗜好品"]:
-                category = "食料品"
-            
-            current_cumulative += price
-            
-            rows.append({
-                "year_month": year_month,
-                "date": date_str,
-                "location": location,
-                "sequence_num": idx,
-                "item_name": item.get("name", "不明"),
-                "category": category,
-                "price": price,
-                "cumulative_price": current_cumulative
-            })
-            
-    return pd.DataFrame(rows)
+def show_camera_input(model_name):
+    st.header("📷 レシート撮影")
+    if st.button("🏠 ホームに戻る"):
+        st.session_state.current_view = 'home'
+        st.rerun()
+    
+    camera_shot = st.camera_input("カメラでレシート全体を撮影してください")
+    
+    if camera_shot:
+        st.markdown("**プレビュー**")
+        st.image(camera_shot, caption="撮影画像", use_container_width=True)
+        
+        if st.button("AI解析実行", type="primary", use_container_width=True):
+            with st.spinner("AI解析中..."):
+                if analyze_and_save(model_name, camera_shot):
+                    st.success("登録完了！")
+                    time.sleep(1.5)
+                    st.session_state.current_view = 'dashboard'
+                    st.rerun()
 
-# --- 5. メインUI ---
+def show_file_input(model_name):
+    st.header("📁 ファイル選択")
+    if st.button("🏠 ホームに戻る"):
+        st.session_state.current_view = 'home'
+        st.rerun()
+    
+    uploaded_file = st.file_uploader("画像/動画を選択", type=['jpg','png','jpeg','mp4','mov'])
+    
+    if uploaded_file:
+        st.markdown("**プレビュー**")
+        is_video = uploaded_file.type.startswith('video')
+        if is_video:
+            st.video(uploaded_file)
+        else:
+            st.image(uploaded_file, use_container_width=True)
+            
+        if st.button("AI解析実行", type="primary", use_container_width=True):
+            with st.spinner("AI解析中..."):
+                if analyze_and_save(model_name, uploaded_file):
+                    st.success("登録完了！")
+                    time.sleep(1.5)
+                    st.session_state.current_view = 'dashboard'
+                    st.rerun()
+
+def show_dashboard():
+    st.title("📊 ダッシュボード")
+    if st.button("🏠 ホームに戻る"):
+        st.session_state.current_view = 'home'
+        st.rerun()
+
+    user_id = st.session_state.user_id
+    conn = get_db()
+    
+    # 今月データ
+    today = datetime.now()
+    this_month_str = today.strftime("%Y/%m")
+    df_month = pd.read_sql("SELECT * FROM receipts WHERE user_id = ? AND year_month = ?", conn, params=(user_id, this_month_str))
+    
+    # 上部サマリー
+    st.subheader(f"{this_month_str} の支出状況")
+    if not df_month.empty:
+        col1, col2 = st.columns(2)
+        with col1:
+            fig_pie = px.pie(df_month, values='price', names='category', hole=0.4, title="カテゴリ別割合")
+            fig_pie.update_layout(showlegend=False, margin=dict(t=30,b=0,l=0,r=0))
+            st.plotly_chart(fig_pie, use_container_width=True)
+        with col2:
+            daily_sum = df_month.groupby('date')['price'].sum().cumsum().reset_index()
+            fig_area = px.area(daily_sum, x='date', y='price', title="日次累積推移")
+            fig_area.update_layout(margin=dict(t=30,b=0,l=0,r=0))
+            st.plotly_chart(fig_area, use_container_width=True)
+    else:
+        st.info("今月のデータはありません。")
+
+    # タブ (月別集計を追加)
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 一覧", "📅 月別", "🏢 店舗別", "📆 日付別", "📉 年次履歴"])
+    
+    # 1. 一覧
+    with tab1:
+        st.caption("※直近1ヶ月以内のデータのみ削除可能")
+        df_list = pd.read_sql("""
+            SELECT date, shop, SUM(price) as total, MIN(created_at) as created_at
+            FROM receipts WHERE user_id = ? 
+            GROUP BY date, shop 
+            ORDER BY date DESC, created_at DESC LIMIT 50
+        """, conn, params=(user_id,))
+        
+        for _, r in df_list.iterrows():
+            with st.expander(f"{r['date']} | {r['shop']} | ¥{r['total']:,}"):
+                items = pd.read_sql("SELECT item_name, category, price FROM receipts WHERE user_id = ? AND date = ? AND shop = ?", conn, params=(user_id, r['date'], r['shop']))
+                st.dataframe(items, use_container_width=True, hide_index=True)
+                
+                # 削除処理
+                try:
+                    rd = datetime.strptime(r['date'], "%Y/%m/%d")
+                    if (datetime.now() - rd).days <= 30:
+                        if st.button("削除", key=f"del_{r['date']}_{r['shop']}"):
+                            c = conn.cursor()
+                            c.execute("DELETE FROM receipts WHERE user_id = ? AND date = ? AND shop = ?", (user_id, r['date'], r['shop']))
+                            conn.commit()
+                            st.rerun()
+                except: pass
+
+    # 2. 月別集計 (Category x YearMonth) - NEW
+    with tab2:
+        st.subheader("月別カテゴリー集計")
+        df_all = pd.read_sql("SELECT category, year_month, price FROM receipts WHERE user_id = ?", conn, params=(user_id,))
+        if not df_all.empty:
+            pivot_month = pd.pivot_table(df_all, index='category', columns='year_month', values='price', aggfunc='sum', fill_value=0)
+            st.dataframe(pivot_month, use_container_width=True)
+        else:
+            st.info("データがありません")
+
+    # 3. 店舗別
+    with tab3:
+        st.subheader("今月の店舗別集計")
+        if not df_month.empty:
+            pivot_shop = pd.pivot_table(df_month, index='category', columns='shop', values='price', aggfunc='sum', fill_value=0)
+            st.dataframe(pivot_shop, use_container_width=True)
+        else:
+            st.info("データがありません")
+
+    # 4. 日付別
+    with tab4:
+        st.subheader("今月の日付別集計")
+        if not df_month.empty:
+            pivot_date = pd.pivot_table(df_month, index='category', columns='date', values='price', aggfunc='sum', fill_value=0)
+            st.dataframe(pivot_date, use_container_width=True)
+        else:
+            st.info("データがありません")
+
+    # 5. 年次履歴
+    with tab5:
+        st.subheader("長期年次トレンド")
+        df_hist = pd.read_sql("SELECT * FROM yearly_history WHERE user_id = ? ORDER BY year", conn, params=(user_id,))
+        if not df_hist.empty:
+            fig_hist = px.bar(df_hist, x='year', y='total_amount', color='category')
+            st.plotly_chart(fig_hist, use_container_width=True)
+            pivot_hist = pd.pivot_table(df_hist, index='category', columns='year', values='total_amount', aggfunc='sum', fill_value=0)
+            st.dataframe(pivot_hist, use_container_width=True)
+        else:
+            st.info("長期履歴なし")
+
+    conn.close()
+
+# --- 7. メイン処理 ---
 def main():
     init_db()
     configure_genai()
-
-    st.title("💰 AI家計簿アプリ")
     
-    # サイドバー
+    # ログインチェック
+    if 'user_id' not in st.session_state:
+        login_page()
+        return
+
+    # サイドバー (共通)
     with st.sidebar:
-        st.header("設定 & 操作")
-        model_option = st.selectbox("使用モデル", ["gemini-flash-latest", "gemini-pro-latest"])
-        st.markdown("---")
-        st.markdown("### 使い方")
-        st.markdown("1. レシート画像/動画をアップロード\n2. AI解析を実行\n3. 結果を確認してDB保存\n4. データ分析タブで確認")
+        st.header("設定")
+        st.write(f"User: {st.session_state.username}")
+        model_name = st.selectbox("Model", ["gemini-flash-latest", "gemini-pro-latest"])
+        if st.button("ログアウト", type="primary"):
+            st.session_state.clear()
+            st.rerun()
 
-    # メインタブ
-    tab1, tab2, tab3 = st.tabs(["📤 データ登録", "📊 ダッシュボード", "📂 データ管理"])
-
-    # タブ1: データ登録
-    with tab1:
-        st.header("レシート解析")
-        uploaded_file = st.file_uploader("レシートの画像または動画をアップロード", type=["jpg", "jpeg", "png", "mp4"])
+    # ビューのルーティング
+    if 'current_view' not in st.session_state:
+        st.session_state.current_view = 'home'
         
-        if uploaded_file:
-            # プレビュー
-            if uploaded_file.type.startswith("image"):
-                st.image(uploaded_file, caption="アップロード画像", use_column_width=True)
-            elif uploaded_file.type.startswith("video"):
-                st.video(uploaded_file)
-            
-            if st.button("AI解析開始", type="primary"):
-                with st.spinner("AIがレシートを解析中..."):
-                    extracted_data = analyze_receipt(model_option, uploaded_file)
-                    
-                    if extracted_data:
-                        df_new = process_extracted_data(extracted_data)
-                        st.session_state["preview_df"] = df_new
-                        st.success("解析完了！")
-        
-        # 解析結果の確認と保存
-        if "preview_df" in st.session_state:
-            st.subheader("解析結果プレビュー")
-            edited_df = st.data_editor(st.session_state["preview_df"], num_rows="dynamic")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("保存する"):
-                    save_to_db(edited_df)
-                    st.success("データベースに保存しました！")
-                    del st.session_state["preview_df"] # 保存後はクリア
-                    st.rerun()
-            with col2:
-                if st.button("キャンセル"):
-                    del st.session_state["preview_df"]
-                    st.rerun()
-
-    # タブ2: ダッシュボード
-    with tab2:
-        st.header("家計簿分析")
-        df = load_data()
-        
-        if not df.empty:
-            # ピボットテーブル分析用のサブタブ
-            pivot_tab1, pivot_tab2, pivot_tab3, pivot_tab4 = st.tabs([
-                "📍 場所 vs 日付", "📅 年月別", "📆 日付別", "🏢 場所別"
-            ])
-            
-            # 1. 場所 VS 日付
-            with pivot_tab1:
-                st.subheader("場所 vs 日付 (購入金額ヒートマップ)")
-                try:
-                    pivot1 = pd.pivot_table(df, index='location', columns='date', values='price', aggfunc='sum', fill_value=0)
-                    st.dataframe(pivot1.style.background_gradient(cmap="YlOrRd", axis=None))
-                except Exception as e:
-                    st.info("データが不足しているため表示できません。")
-
-            # 2. 年月別
-            with pivot_tab2:
-                st.subheader("年月別 内訳")
-                try:
-                    pivot2 = pd.pivot_table(df, index=['category', 'item_name'], columns='year_month', values='price', aggfunc='sum', fill_value=0)
-                    st.dataframe(pivot2)
-                except:
-                    st.info("データ不足")
-
-            # 3. 日付別
-            with pivot_tab3:
-                st.subheader("日付別 内訳")
-                try:
-                    pivot3 = pd.pivot_table(df, index=['category', 'item_name'], columns='date', values='price', aggfunc='sum', fill_value=0)
-                    st.dataframe(pivot3)
-                except:
-                    st.info("データ不足")
-            
-            # 4. 場所別
-            with pivot_tab4:
-                st.subheader("場所別 内訳")
-                try:
-                    pivot4 = pd.pivot_table(df, index=['category', 'item_name'], columns='location', values='price', aggfunc='sum', fill_value=0)
-                    st.dataframe(pivot4)
-                except:
-                    st.info("データ不足")
-
-        else:
-            st.info("データがまだありません。「データ登録」タブからレシートを追加してください。")
-
-    # タブ3: データ管理
-    with tab3:
-        st.header("保存済みデータ一覧")
-        df = load_data()
-        st.dataframe(df, use_container_width=True)
-        
-        if not df.empty:
-            csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="CSVダウンロード",
-                data=csv,
-                file_name=f"kakeibo_data_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime='text/csv',
-            )
+    view = st.session_state.current_view
+    
+    if view == 'home':
+        show_home(st.session_state.username)
+    elif view == 'camera':
+        show_camera_input(model_name)
+    elif view == 'upload':
+        show_file_input(model_name)
+    elif view == 'dashboard':
+        show_dashboard()
 
 if __name__ == "__main__":
     main()

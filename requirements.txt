@@ -3,3 +3,5 @@ pandas
 google-generativeai
 matplotlib
 seaborn
+plotly
+bcrypt
