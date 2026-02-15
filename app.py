@@ -260,7 +260,13 @@ def predict_category(model_name, item_name):
 
 def show_home(username):
     st.title("🏠 AI家計簿 Pro - ホーム")
-    st.write(f"ようこそ、**{username}** さん ( Ver 1.01 )")
+    col_title, col_help = st.columns([0.8, 0.2])
+    with col_title:
+        st.write(f"ようこそ、**{username}** さん ( Ver 1.01 )")
+    with col_help:
+        if st.button("❓ ヘルプ", use_container_width=True):
+            st.session_state.current_view = 'help'
+            st.rerun()
     
     col1, col2, col3 = st.columns(3)
     
@@ -497,6 +503,62 @@ def show_dashboard():
     conn.close()
 
 # --- 7. メイン処理 ---
+def show_help(model_name):
+    st.title("❓ AI家計簿 ヘルプチャット")
+    if st.button("🏠 ホームに戻る"):
+        st.session_state.current_view = 'home'
+        st.rerun()
+
+    # Chat history init
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # Display chat history
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # Chat input
+    if prompt := st.chat_input("質問を入力してください（例：手入力の使い方は？）"):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            with st.spinner("AI回答作成中..."):
+                try:
+                    model = genai.GenerativeModel(model_name)
+                    system_prompt = """
+                    あなたは「AI家計簿 Pro」のヘルプアシスタントです。以下のアプリ機能に基づいてユーザーの質問に答えてください。
+                    
+                    【アプリ機能概要】
+                    1. **ホーム画面**: 
+                       - 「手入力で登録」、「写真またはファイル選択」、「グラフ・集計を見る」の3つの機能があります。
+                       - 「ヘルプ」ボタンからこのチャットを開けます。
+                    
+                    2. **レシート手入力 (一括登録)**:
+                       - 日付と店舗名を入力し、商品名と金額をリスト形式で複数追加できます。
+                       - 「一括登録する」ボタンを押すと、AIが商品名から自動的にカテゴリ（食料品、日用品など）を判定して保存します。
+                       - 金額にマイナスを入れると返品扱いになります。
+                    
+                    3. **写真またはファイル選択**:
+                       - レシートの画像をアップロードすると、AIが内容を解析して自動登録します。
+                    
+                    4. **ダッシュボード**:
+                       - **一覧**: 登録データの確認・削除ができます。
+                       - **日別・店舗別・月別**: それぞれの切り口で集計表を表示します。合計行は青色で表示されます。
+                       - **年別**: 過去30年分のデータをグラフで見ることができます。
+                    
+                    回答は親切で簡潔に、日本語で行ってください。
+                    """
+                    
+                    response = model.generate_content([system_prompt, prompt])
+                    reply = response.text
+                    st.markdown(reply)
+                    st.session_state.messages.append({"role": "assistant", "content": reply})
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {e}")
+
 def main():
     init_db()
     configure_genai()
@@ -530,6 +592,8 @@ def main():
         show_file_input(model_name)
     elif view == 'dashboard':
         show_dashboard()
+    elif view == 'help':
+        show_help(model_name)
 
 if __name__ == "__main__":
     main()
