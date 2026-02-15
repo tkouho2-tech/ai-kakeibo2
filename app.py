@@ -307,45 +307,80 @@ def show_file_input(model_name):
                     st.rerun()
 
 def show_manual_input(model_name):
-    st.header("📝 レシート手入力")
+    st.header("📝 レシート手入力 (一括登録)")
     if st.button("🏠 ホームに戻る"):
         st.session_state.current_view = 'home'
         st.rerun()
         
-    with st.form("manual_entry"):
+    # Header inputs
+    col1, col2 = st.columns(2)
+    with col1:
         date_val = st.date_input("日付", value=datetime.now())
-        shop_val = st.text_input("店舗名", placeholder="例: セブンイレブン")
-        item_val = st.text_input("商品名", placeholder="例: おにぎり")
-        price_val = st.number_input("金額 (円)", step=1, value=0)
+    with col2:
+        shop_val = st.text_input("店舗名", placeholder="例: スーパーXX")
+
+    st.caption("以下の表に商品名と金額を入力してください。行を追加して複数の商品を登録できます。")
+    
+    # Initialize data editor df
+    if 'manual_df' not in st.session_state:
+        st.session_state.manual_df = pd.DataFrame([{"商品名": "", "金額": 0}])
+
+    edited_df = st.data_editor(
+        st.session_state.manual_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "商品名": st.column_config.TextColumn("商品名", required=True),
+            "金額": st.column_config.NumberColumn("金額", format="%d 円", step=1, required=True)
+        }
+    )
+
+    if st.button("一括登録する", type="primary", use_container_width=True):
+        if not shop_val:
+            st.error("店舗名を入力してください。")
+            return
+
+        valid_rows = edited_df[edited_df["商品名"].str.strip() != ""]
+        valid_rows = valid_rows[valid_rows["金額"] != 0]
         
-        if st.form_submit_button("登録する", type="primary", use_container_width=True):
-            if not item_val or price_val == 0:
-                st.error("商品名と金額を入力してください。")
-            else:
-                with st.spinner("AIカテゴリ判定中..."):
-                    # AIでカテゴリ判定
-                    category = predict_category(model_name, item_val)
-                    
-                    # DB保存
-                    user_id = st.session_state.user_id
-                    date_str = date_val.strftime("%Y/%m/%d")
-                    year_month = date_val.strftime("%Y/%m")
-                    
-                    conn = get_db()
-                    c = conn.cursor()
-                    c.execute("""
-                        INSERT INTO receipts (user_id, year_month, date, shop, seq_no, item_name, category, price, cumulative_price)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (user_id, year_month, date_str, shop_val, 1, item_val, category, price_val, price_val))
-                    
-                    update_yearly_history(user_id, date_str)
-                    conn.commit()
-                    conn.close()
-                    
-                    st.success(f"登録しました！ カテゴリ: {category}")
-                    time.sleep(1.5)
-                    st.session_state.current_view = 'dashboard'
-                    st.rerun()
+        if valid_rows.empty:
+            st.error("商品名と金額（0以外）を入力してください。")
+            return
+
+        with st.spinner(f"{len(valid_rows)}件のデータをAI解析・登録中..."):
+            user_id = st.session_state.user_id
+            date_str = date_val.strftime("%Y/%m/%d")
+            year_month = date_val.strftime("%Y/%m")
+            
+            conn = get_db()
+            c = conn.cursor()
+            
+            curr_cumulative = 0
+            
+            for idx, row in valid_rows.iterrows():
+                item_name = row["商品名"]
+                price = int(row["金額"])
+                
+                # AI Category Prediction
+                category = predict_category(model_name, item_name)
+                
+                curr_cumulative += price
+                
+                c.execute("""
+                    INSERT INTO receipts (user_id, year_month, date, shop, seq_no, item_name, category, price, cumulative_price)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (user_id, year_month, date_str, shop_val, idx+1, item_name, category, price, curr_cumulative))
+            
+            update_yearly_history(user_id, date_str)
+            conn.commit()
+            conn.close()
+            
+            # Reset form
+            st.session_state.manual_df = pd.DataFrame([{"商品名": "", "金額": 0}])
+            st.success(f"{len(valid_rows)}件のデータを登録しました！")
+            time.sleep(1.5)
+            st.session_state.current_view = 'dashboard'
+            st.rerun()
 
 def show_dashboard():
     st.title("📊 ダッシュボード")
