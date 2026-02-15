@@ -233,21 +233,50 @@ def analyze_and_save(model_name, uploaded_file):
     finally:
         if os.path.exists(tmp_path): os.remove(tmp_path)
 
+def predict_category(model_name, item_name):
+    try:
+        model = genai.GenerativeModel(model_name)
+        prompt = f"""
+        商品名「{item_name}」を以下のカテゴリから1つ選んで分類してください。
+        回答はカテゴリ名のみを出力してください。
+        
+        カテゴリ候補:
+        食料品, 日用品, 外食, 交通費, 交際費, 衣服・美容, 健康・医療, 通信費, 水道・光熱費, 住居費, 教育・教養, 娯楽, その他
+        
+        ※ルール:
+        - アルコール、お菓子、飲料は「食料品」
+        - 洗剤、ティッシュは「日用品」
+        """
+        response = model.generate_content(prompt)
+        cat = response.text.strip()
+        # クリーニング
+        for c in ["食料品", "日用品", "外食", "交通費", "交際費", "衣服・美容", "健康・医療", "通信費", "水道・光熱費", "住居費", "教育・教養", "娯楽", "その他"]:
+            if c in cat: return c
+        return "その他"
+    except:
+        return "その他"
+
 # --- 6. 画面コンポーネント ---
 
 def show_home(username):
     st.title("🏠 AI家計簿 Pro - ホーム")
     st.write(f"ようこそ、**{username}** さん")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
+        st.info("📝 手入力で登録")
+        if st.button("手動入力フォームへ", use_container_width=True, type="primary"):
+            st.session_state.current_view = 'manual'
+            st.rerun()
+
+    with col2:
         st.info("📁 保存済みの画像/動画を選択")
         if st.button("ファイルを選択する", use_container_width=True, type="primary"):
             st.session_state.current_view = 'upload'
             st.rerun()
             
-    with col2:
+    with col3:
         st.info("📊 家計簿データを確認")
         if st.button("グラフ・集計を見る", use_container_width=True, type="primary"):
             st.session_state.current_view = 'dashboard'
@@ -273,6 +302,47 @@ def show_file_input(model_name):
             with st.spinner("AI解析中..."):
                 if analyze_and_save(model_name, uploaded_file):
                     st.success("登録完了！")
+                    time.sleep(1.5)
+                    st.session_state.current_view = 'dashboard'
+                    st.rerun()
+
+def show_manual_input(model_name):
+    st.header("📝 レシート手入力")
+    if st.button("🏠 ホームに戻る"):
+        st.session_state.current_view = 'home'
+        st.rerun()
+        
+    with st.form("manual_entry"):
+        date_val = st.date_input("日付", value=datetime.now())
+        shop_val = st.text_input("店舗名", placeholder="例: セブンイレブン")
+        item_val = st.text_input("商品名", placeholder="例: おにぎり")
+        price_val = st.number_input("金額 (円)", step=1, value=0)
+        
+        if st.form_submit_button("登録する", type="primary", use_container_width=True):
+            if not item_val or price_val == 0:
+                st.error("商品名と金額を入力してください。")
+            else:
+                with st.spinner("AIカテゴリ判定中..."):
+                    # AIでカテゴリ判定
+                    category = predict_category(model_name, item_val)
+                    
+                    # DB保存
+                    user_id = st.session_state.user_id
+                    date_str = date_val.strftime("%Y/%m/%d")
+                    year_month = date_val.strftime("%Y/%m")
+                    
+                    conn = get_db()
+                    c = conn.cursor()
+                    c.execute("""
+                        INSERT INTO receipts (user_id, year_month, date, shop, seq_no, item_name, category, price, cumulative_price)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (user_id, year_month, date_str, shop_val, 1, item_val, category, price_val, price_val))
+                    
+                    update_yearly_history(user_id, date_str)
+                    conn.commit()
+                    conn.close()
+                    
+                    st.success(f"登録しました！ カテゴリ: {category}")
                     time.sleep(1.5)
                     st.session_state.current_view = 'dashboard'
                     st.rerun()
@@ -419,6 +489,8 @@ def main():
     if view == 'home':
         show_home(st.session_state.username)
     # camera view removed
+    elif view == 'manual':
+        show_manual_input(model_name)
     elif view == 'upload':
         show_file_input(model_name)
     elif view == 'dashboard':
