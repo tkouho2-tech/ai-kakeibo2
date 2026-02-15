@@ -69,6 +69,13 @@ def init_db():
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_yh_mid_year ON yearly_history(user_id, year)")
     
+    # Schema Migration for 'total_amount'
+    try:
+        c.execute("ALTER TABLE yearly_history ADD COLUMN total_amount INTEGER")
+    except:
+        # Column likely already exists
+        pass
+    
     conn.commit()
     conn.close()
 
@@ -125,7 +132,7 @@ def login_page():
                         st.error("そのユーザー名は既に使用されています。")
 
 # --- 4. 自動集計ロジック (Yearly Aggregation) ---
-def check_and_aggregate_yearly(user_id, receipt_date_str):
+def update_yearly_history(user_id, receipt_date_str):
     try:
         dt = datetime.strptime(receipt_date_str, "%Y/%m/%d")
         if dt.month == 1:
@@ -137,7 +144,7 @@ def check_and_aggregate_yearly(user_id, receipt_date_str):
             if not c.fetchone():
                 c.execute("""
                     INSERT INTO yearly_history (user_id, year, category, total_amount)
-                    SELECT user_id, substr(date, 1, 4) as year, category, SUM(price)
+                    SELECT user_id, substr(date, 1, 4) as year, category, SUM(price) as total_amount
                     FROM receipts
                     WHERE user_id = ? AND substr(date, 1, 4) = ?
                     GROUP BY category
@@ -214,7 +221,7 @@ def analyze_and_save(model_name, uploaded_file):
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (user_id, year_month, date_str, shop, idx, item.get("name"), cat, price, curr_cumulative))
             
-            check_and_aggregate_yearly(user_id, date_str)
+            update_yearly_history(user_id, date_str)
             
         conn.commit()
         conn.close()
@@ -326,11 +333,11 @@ def show_dashboard():
     else:
         st.info("今月のデータはありません。")
 
-    # タブ (月別集計を追加)
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 一覧", "📅 月別", "🏢 店舗別", "📆 日付別", "📉 年次履歴"])
+    # タブ (順序変更: 一覧, 日別, 店舗別, 月別, 年別)
+    tab_list, tab_date, tab_shop, tab_month, tab_year = st.tabs(["📝 一覧", "📆 日別", "🏢 店舗別", "📅 月別", "📉 年別"])
     
     # 1. 一覧
-    with tab1:
+    with tab_list:
         st.caption("※直近1ヶ月以内のデータのみ削除可能")
         df_list = pd.read_sql("""
             SELECT date, shop, SUM(price) as total, MIN(created_at) as created_at
@@ -355,8 +362,26 @@ def show_dashboard():
                             st.rerun()
                 except: pass
 
-    # 2. 月別集計 (Category x YearMonth) - NEW
-    with tab2:
+    # 2. 日別集計 (Category x Date)
+    with tab_date:
+        st.subheader("日別カテゴリー集計")
+        if not df_month.empty:
+            pivot_date = pd.pivot_table(df_month, index='category', columns='date', values='price', aggfunc='sum', fill_value=0)
+            st.dataframe(pivot_date, use_container_width=True)
+        else:
+            st.info("データがありません")
+
+    # 3. 店舗別集計 (Category x Shop)
+    with tab_shop:
+        st.subheader("店舗別カテゴリー集計")
+        if not df_month.empty:
+            pivot_shop = pd.pivot_table(df_month, index='category', columns='shop', values='price', aggfunc='sum', fill_value=0)
+            st.dataframe(pivot_shop, use_container_width=True)
+        else:
+            st.info("データがありません")
+
+    # 4. 月別集計 (Category x YearMonth)
+    with tab_month:
         st.subheader("月別カテゴリー集計")
         df_all = pd.read_sql("SELECT category, year_month, price FROM receipts WHERE user_id = ?", conn, params=(user_id,))
         if not df_all.empty:
@@ -365,27 +390,9 @@ def show_dashboard():
         else:
             st.info("データがありません")
 
-    # 3. 店舗別
-    with tab3:
-        st.subheader("今月の店舗別集計")
-        if not df_month.empty:
-            pivot_shop = pd.pivot_table(df_month, index='category', columns='shop', values='price', aggfunc='sum', fill_value=0)
-            st.dataframe(pivot_shop, use_container_width=True)
-        else:
-            st.info("データがありません")
-
-    # 4. 日付別
-    with tab4:
-        st.subheader("今月の日付別集計")
-        if not df_month.empty:
-            pivot_date = pd.pivot_table(df_month, index='category', columns='date', values='price', aggfunc='sum', fill_value=0)
-            st.dataframe(pivot_date, use_container_width=True)
-        else:
-            st.info("データがありません")
-
-    # 5. 年次履歴
-    with tab5:
-        st.subheader("長期年次トレンド")
+    # 5. 年別集計 (Long Term)
+    with tab_year:
+        st.subheader("年別カテゴリー集計 (30年保存)")
         df_hist = pd.read_sql("SELECT * FROM yearly_history WHERE user_id = ? ORDER BY year", conn, params=(user_id,))
         if not df_hist.empty:
             fig_hist = px.bar(df_hist, x='year', y='total_amount', color='category')
