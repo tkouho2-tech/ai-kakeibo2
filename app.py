@@ -262,8 +262,9 @@ def show_home(username):
     st.title("🏠 AI家計簿 Pro - ホーム")
     col_title, col_help = st.columns([0.8, 0.2])
     with col_title:
-        st.write(f"ようこそ、**{username}** さん ( Ver 1.03 )")
+        st.write(f"ようこそ、**{username}** さん ( Ver 1.04 )")
     with col_help:
+
         if st.button("❓ ヘルプ", use_container_width=True):
             st.session_state.current_view = 'help'
             st.rerun()
@@ -294,7 +295,7 @@ def show_file_input(model_name):
         st.session_state.current_view = 'home'
         st.rerun()
     
-    uploaded_file = st.file_uploader("画像/動画を選択", type=['jpg','png','jpeg','mp4','mov'])
+    uploaded_file = st.file_uploader("画像/動画を選択", type=['jpg','png','jpeg','mp4','mov', 'heic', 'heif'])
     
     if uploaded_file:
         st.markdown("**プレビュー**")
@@ -302,7 +303,10 @@ def show_file_input(model_name):
         if is_video:
             st.video(uploaded_file)
         else:
-            st.image(uploaded_file, use_container_width=True)
+            if uploaded_file.name.lower().endswith(('.heic', '.heif')):
+                st.warning("⚠️ HEIC形式のプレビューはサポートされていませんが、解析は可能です。")
+            else:
+                st.image(uploaded_file, use_container_width=True)
             
         if st.button("AI解析実行", type="primary", use_container_width=True):
             with st.spinner("AI解析中..."):
