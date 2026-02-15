@@ -271,7 +271,7 @@ def show_home(username):
             st.rerun()
 
     with col2:
-        st.info("📁 保存済みの画像/動画を選択")
+        st.info("📁 レシートをアップロード")
         if st.button("写真orファイル選択", use_container_width=True, type="primary"):
             st.session_state.current_view = 'upload'
             st.rerun()
