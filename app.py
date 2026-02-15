@@ -336,6 +336,10 @@ def show_dashboard():
                             st.rerun()
                 except: pass
 
+    # Styling function
+    def highlight_total(s):
+        return ['background-color: #1f77b4; color: white; font-weight: bold' if s.name == '合計' else '' for _ in s]            
+
     # 2. 日別集計 (Category x Date)
     with tab_date:
         st.subheader("日別カテゴリー集計")
@@ -343,7 +347,7 @@ def show_dashboard():
             pivot_date = pd.pivot_table(df_month, index='category', columns='date', values='price', aggfunc='sum', fill_value=0)
             # 合計行追加
             pivot_date.loc['合計'] = pivot_date.sum(numeric_only=True)
-            st.dataframe(pivot_date, use_container_width=True)
+            st.dataframe(pivot_date.style.apply(highlight_total, axis=1), use_container_width=True)
         else:
             st.info("データがありません")
 
@@ -354,7 +358,7 @@ def show_dashboard():
             pivot_shop = pd.pivot_table(df_month, index='category', columns='shop', values='price', aggfunc='sum', fill_value=0)
             # 合計行追加
             pivot_shop.loc['合計'] = pivot_shop.sum(numeric_only=True)
-            st.dataframe(pivot_shop, use_container_width=True)
+            st.dataframe(pivot_shop.style.apply(highlight_total, axis=1), use_container_width=True)
         else:
             st.info("データがありません")
 
@@ -366,7 +370,7 @@ def show_dashboard():
             pivot_month = pd.pivot_table(df_all, index='category', columns='year_month', values='price', aggfunc='sum', fill_value=0)
             # 合計行追加
             pivot_month.loc['合計'] = pivot_month.sum(numeric_only=True)
-            st.dataframe(pivot_month, use_container_width=True)
+            st.dataframe(pivot_month.style.apply(highlight_total, axis=1), use_container_width=True)
         else:
             st.info("データがありません")
 
@@ -381,7 +385,7 @@ def show_dashboard():
             pivot_hist = pd.pivot_table(df_hist, index='category', columns='year', values='total_amount', aggfunc='sum', fill_value=0)
             # 合計行追加
             pivot_hist.loc['合計'] = pivot_hist.sum(numeric_only=True)
-            st.dataframe(pivot_hist, use_container_width=True)
+            st.dataframe(pivot_hist.style.apply(highlight_total, axis=1), use_container_width=True)
         else:
             st.info("長期履歴なし")
 
