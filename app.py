@@ -239,45 +239,19 @@ def show_home(username):
     st.title("🏠 AI家計簿 Pro - ホーム")
     st.write(f"ようこそ、**{username}** さん")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     
     with col1:
-        st.info("📷 レシートを撮影して登録")
-        if st.button("カメラで撮影する", use_container_width=True, type="primary"):
-            st.session_state.current_view = 'camera'
-            st.rerun()
-            
-    with col2:
         st.info("📁 保存済みの画像/動画を選択")
         if st.button("ファイルを選択する", use_container_width=True, type="primary"):
             st.session_state.current_view = 'upload'
             st.rerun()
             
-    with col3:
+    with col2:
         st.info("📊 家計簿データを確認")
         if st.button("グラフ・集計を見る", use_container_width=True, type="primary"):
             st.session_state.current_view = 'dashboard'
             st.rerun()
-
-def show_camera_input(model_name):
-    st.header("📷 レシート撮影")
-    if st.button("🏠 ホームに戻る"):
-        st.session_state.current_view = 'home'
-        st.rerun()
-    
-    camera_shot = st.camera_input("カメラでレシート全体を撮影してください")
-    
-    if camera_shot:
-        st.markdown("**プレビュー**")
-        st.image(camera_shot, caption="撮影画像", use_container_width=True)
-        
-        if st.button("AI解析実行", type="primary", use_container_width=True):
-            with st.spinner("AI解析中..."):
-                if analyze_and_save(model_name, camera_shot):
-                    st.success("登録完了！")
-                    time.sleep(1.5)
-                    st.session_state.current_view = 'dashboard'
-                    st.rerun()
 
 def show_file_input(model_name):
     st.header("📁 ファイル選択")
