@@ -12,22 +12,26 @@ except Exception as e:
     print(f"Error loading secrets: {e}")
     exit(1)
 
-model_name = "gemini-1.5-flash"
+models_to_test = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash-lite-001",
+    "gemini-flash-latest",
+    "gemini-pro-latest",
+    "gemini-2.0-flash-exp",
+    "gemini-2.5-flash"
+]
+
 prompt = "手入力の使い方は？"
-system_prompt = """
-あなたは「AI家計簿 Pro」のヘルプアシスタントです。以下のアプリ機能に基づいてユーザーの質問に答えてください。
-(Truncated for brevity, assuming the rest matches app.py context)
-"""
+system_prompt = "あなたはAI家計簿のアシスタントです。"
 
-print(f"Testing model: {model_name}")
-
-try:
-    model = genai.GenerativeModel(model_name)
-    print("Model initialized.")
-    # Replicating the exact call from app.py
-    response = model.generate_content([system_prompt, prompt])
-    print(f"Success! Response: {response.text}")
-except Exception as e:
-    print(f"ERROR OCCURRED: {e}")
-    import traceback
-    traceback.print_exc()
+print("-" * 30)
+for model_name in models_to_test:
+    print(f"Testing model: {model_name}")
+    try:
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content([system_prompt, prompt])
+        print(f"SUCCESS! Response: {response.text[:50]}...")
+    except Exception as e:
+        print(f"FAILED: {e}")
+    print("-" * 30)
