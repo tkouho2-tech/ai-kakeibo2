@@ -576,8 +576,8 @@ def main():
     with st.sidebar:
         st.header("設定")
         st.write(f"User: {st.session_state.username}")
-        # Use specific 1.5 models for better stability/quota
-        model_name = st.selectbox("Model", ["gemini-1.5-flash", "gemini-1.5-pro"])
+        # Use available models from list
+        model_name = st.selectbox("Model", ["gemini-2.0-flash", "gemini-pro-latest"])
         if st.button("ログアウト", type="primary"):
             st.session_state.clear()
             st.rerun()
