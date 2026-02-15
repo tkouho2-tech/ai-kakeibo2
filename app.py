@@ -557,7 +557,11 @@ def show_help(model_name):
                     st.markdown(reply)
                     st.session_state.messages.append({"role": "assistant", "content": reply})
                 except Exception as e:
-                    st.error(f"エラーが発生しました: {e}")
+                    error_msg = str(e).lower()
+                    if "429" in error_msg or "quota" in error_msg:
+                        st.warning("AIが少し混み合っています。7〜10秒ほど待ってから、もう一度送信してみてください。")
+                    else:
+                        st.error("申し訳ありません。一時的なエラーです。少し時間を置いてお試しください。")
 
 def main():
     init_db()
