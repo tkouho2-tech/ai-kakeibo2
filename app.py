@@ -367,6 +367,8 @@ def show_dashboard():
         st.subheader("日別カテゴリー集計")
         if not df_month.empty:
             pivot_date = pd.pivot_table(df_month, index='category', columns='date', values='price', aggfunc='sum', fill_value=0)
+            # 合計行追加
+            pivot_date.loc['合計'] = pivot_date.sum(numeric_only=True)
             st.dataframe(pivot_date, use_container_width=True)
         else:
             st.info("データがありません")
@@ -376,6 +378,8 @@ def show_dashboard():
         st.subheader("店舗別カテゴリー集計")
         if not df_month.empty:
             pivot_shop = pd.pivot_table(df_month, index='category', columns='shop', values='price', aggfunc='sum', fill_value=0)
+            # 合計行追加
+            pivot_shop.loc['合計'] = pivot_shop.sum(numeric_only=True)
             st.dataframe(pivot_shop, use_container_width=True)
         else:
             st.info("データがありません")
@@ -386,6 +390,8 @@ def show_dashboard():
         df_all = pd.read_sql("SELECT category, year_month, price FROM receipts WHERE user_id = ?", conn, params=(user_id,))
         if not df_all.empty:
             pivot_month = pd.pivot_table(df_all, index='category', columns='year_month', values='price', aggfunc='sum', fill_value=0)
+            # 合計行追加
+            pivot_month.loc['合計'] = pivot_month.sum(numeric_only=True)
             st.dataframe(pivot_month, use_container_width=True)
         else:
             st.info("データがありません")
@@ -397,7 +403,10 @@ def show_dashboard():
         if not df_hist.empty:
             fig_hist = px.bar(df_hist, x='year', y='total_amount', color='category')
             st.plotly_chart(fig_hist, use_container_width=True)
+            
             pivot_hist = pd.pivot_table(df_hist, index='category', columns='year', values='total_amount', aggfunc='sum', fill_value=0)
+            # 合計行追加
+            pivot_hist.loc['合計'] = pivot_hist.sum(numeric_only=True)
             st.dataframe(pivot_hist, use_container_width=True)
         else:
             st.info("長期履歴なし")
@@ -431,8 +440,7 @@ def main():
     
     if view == 'home':
         show_home(st.session_state.username)
-    elif view == 'camera':
-        show_camera_input(model_name)
+    # camera view removed
     elif view == 'upload':
         show_file_input(model_name)
     elif view == 'dashboard':
