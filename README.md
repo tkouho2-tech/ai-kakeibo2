@@ -40,3 +40,27 @@ streamlit run app.py
 ```
 
 ブラウザが自動的に立ち上がり、アプリが表示されます。
+
+## 3. デプロイ (Streamlit Community Cloud)
+
+このアプリをインターネット上で公開するには、Streamlit Community Cloud が便利です。
+
+### 手順
+
+1. このリポジトリを GitHub にプッシュします。
+2. [Streamlit Community Cloud](https://streamlit.io/cloud) にサインアップ/ログインします。
+3. "New app" をクリックし、このリポジトリを選択します。
+4. "Advanced settings" をクリックし、Secrets 欄に以下のように API キーを設定します。
+
+```toml
+GEMINI_API_KEY = "あなたのAPIキー"
+```
+
+5. "Deploy!" をクリックします。
+
+### ⚠️ 注意事項 (SQLiteについて)
+
+このアプリはデータベースとして SQLite (`*.db` ファイル) を使用しています。
+Streamlit Community Cloud の仕様上、**アプリが再起動またはスリープすると、保存されたデータは初期化（リセット）されます。**
+
+永続的にデータを保存したい場合は、Google Sheets や外部データベース (PostgreSQL, Supabase など) との連携が必要です。
