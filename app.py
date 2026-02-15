@@ -260,7 +260,7 @@ def predict_category(model_name, item_name):
 
 def show_home(username):
     st.title("🏠 AI家計簿 Pro - ホーム")
-    st.write(f"ようこそ、**{username}** さん")
+    st.write(f"ようこそ、**{username}** さん ( Ver 1.01 )")
     
     col1, col2, col3 = st.columns(3)
     
