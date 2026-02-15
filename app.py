@@ -262,7 +262,7 @@ def show_home(username):
     st.title("🏠 AI家計簿 Pro - ホーム")
     col_title, col_help = st.columns([0.8, 0.2])
     with col_title:
-        st.write(f"ようこそ、**{username}** さん ( Ver 1.02 )")
+        st.write(f"ようこそ、**{username}** さん ( Ver 1.03 )")
     with col_help:
         if st.button("❓ ヘルプ", use_container_width=True):
             st.session_state.current_view = 'help'
