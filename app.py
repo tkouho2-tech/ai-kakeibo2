@@ -11,6 +11,7 @@ import bcrypt
 import plotly.express as px
 from PIL import Image
 import io
+import calendar
 
 # --- 1. アプリケーション設定 ---
 st.set_page_config(
@@ -341,6 +342,7 @@ def show_home(username):
             st.session_state.current_view = 'dashboard'
             st.rerun()
 
+
 def show_file_input(model_name):
     st.header("📁 写真またはファイル選択")
     if st.button("🏠 ホームに戻る"):
@@ -444,104 +446,444 @@ def show_manual_input(model_name):
             st.session_state.current_view = 'dashboard'
             st.rerun()
 
+# --- 6. v3.0 Modern Dashboard Components ---
+
+def get_category_color(category):
+    colors = {
+        "食料品": "#a8e6a3", # Thin Green
+        "外食": "#ffcc80",   # Orange
+        "日用品": "#90caf9", # Blue
+        "交通費": "#ce93d8", # Purple
+        "医療・健康": "#81d4fa", # Light Blue
+        "住居費": "#bcaaa4",
+        "水道・光熱費": "#ffab91",
+        "通信費": "#e6ee9c",
+        "衣服・美容": "#f48fb1",
+        "交際費": "#b39ddb",
+        "教育・教養": "#80cbc4",
+        "娯楽": "#ffff8d",
+        "その他": "#eeeeee"
+    }
+    return colors.get(category, "#eeeeee")
+
+def render_calendar(df_month, year, month):
+    # Calendar implementation
+    # df_month should have 'date' and 'price'
+    st.subheader(f"{year}年{month}月 カレンダー")
+    
+    # Create a dictionary of date -> total price
+    daily_totals = df_month.groupby('date')['price'].sum().to_dict()
+    
+    # Calendar module setup
+    cal = calendar.Calendar(firstweekday=6) # Sunday start
+    month_days = cal.monthdayscalendar(year, month)
+    
+    # Custom CSS for Button Grid and Colors
+    # Note: Streamlit buttons are hard to style individually based on value (red text).
+    # We will use CSS to color the headers (Sun=Red, Sat=Blue).
+    st.markdown("""
+        <style>
+        /* Header Colors */
+        div[data-testid="stColumn"] > div > div > div > p {
+            font-size: 1rem;
+        }
+        /* Grid Button Sizing */
+        div[data-testid="stColumn"] button {
+            width: 100%;
+            height: 80px; /* Taller for details */
+            padding: 0px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            line-height: 1.2;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    # Headers
+    cols = st.columns(7)
+    weekdays = ["日", "月", "火", "水", "木", "金", "土"]
+    colors = ["#d32f2f", "#333", "#333", "#333", "#333", "#333", "#1976d2"] # Sun=Red, Sat=Blue
+    
+    for i, w in enumerate(weekdays):
+        cols[i].markdown(f"<div style='text-align:center; font-weight:bold; color:{colors[i]};'>{w}</div>", unsafe_allow_html=True)
+        
+    # Days
+    for week in month_days:
+        cols = st.columns(7)
+        for i, day in enumerate(week):
+            with cols[i]:
+                if day == 0:
+                    st.write("")
+                else:
+                    date_str = f"{year}/{month:02d}/{day:02d}"
+                    total = daily_totals.get(date_str, 0)
+                    
+                    # Label Construction
+                    # Day (Standard)
+                    # If Sun or Holiday: font color red? (Hard to do inside button label in Streamlit)
+                    # We will rely on Grid Column Context for Sat/Sun.
+                    # Total: Small Red Text (Requested). 
+                    # Standard Button text is one color. We will use plain text format.
+                    
+                    label = f"{day}"
+                    if total > 0:
+                        label += f"\n¥{total:,}"
+                    
+                    # Button for each day
+                    if st.button(label, key=f"btn_cal_{year}_{month}_{day}", use_container_width=True):
+                        st.session_state['selected_cal_date'] = date_str
+    
+    # Detail View
+    if 'selected_cal_date' in st.session_state:
+        selected_date = st.session_state['selected_cal_date']
+        # Verify if selected date belongs to current view month
+        try:
+            sel_y, sel_m, _ = map(int, selected_date.split('/'))
+            if sel_y == year and sel_m == month:
+                st.divider()
+                st.markdown(f"### 📅 {selected_date} の詳細")
+                
+                # Filter data
+                day_data = df_month[df_month['date'] == selected_date].copy()
+                
+                if not day_data.empty:
+                    # Total
+                    day_total = day_data['price'].sum()
+                    st.markdown(f"<div style='font-size:1.5rem; font-weight:bold; color:#d32f2f; margin-bottom:10px;'>合計: ¥{day_total:,}</div>", unsafe_allow_html=True)
+                    
+                    # Sorted list by price desc
+                    day_data = day_data.sort_values('price', ascending=False)
+                    
+                    # List Format: Category (Shop) Price
+                    for _, row in day_data.iterrows():
+                        cat = row['category']
+                        shop = row['shop'] if row['shop'] else "詳細なし"
+                        price = row['price']
+                        
+                        # Icon based on category (Simple mapping)
+                        icon = "🛒" # Default
+                        if cat == "食料品": icon = "🍚"
+                        elif cat == "外食": icon = "🍜"
+                        elif cat == "交通費": icon = "🚃"
+                        
+                        st.markdown(
+                            f"""
+                            <div style='
+                                padding: 10px; 
+                                border-bottom: 1px solid #eee; 
+                                display: flex; 
+                                justify-content: space-between; 
+                                align-items: center;
+                            '>
+                                <div>
+                                    <span style='font-weight:bold;'>{cat}</span>
+                                    <span style='color:#666; font-size:0.9rem;'>（{shop}）</span>
+                                </div>
+                                <div style='font-weight:bold; color:#333;'>
+                                    ¥{price:,}
+                                </div>
+                            </div>
+                            """, 
+                            unsafe_allow_html=True
+                        )
+
+                else:
+                    st.info("この日の支出はありません。")
+        except ValueError:
+            pass
+
 def show_dashboard():
+    # CSS Injection for Modern Theme and List
+    st.markdown("""
+        <style>
+        /* Modern Clean Theme */
+        .stApp {
+            background-color: #ffffff;
+            color: #333333;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+        }
+        /* Month Navigation */
+        .month-nav {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 20px;
+        }
+        /* Summary Total */
+        .summary-total {
+            text-align: center;
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #333;
+            margin-top: -10px;
+            margin-bottom: 20px;
+        }
+        /* Category List */
+        .cat-list-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 15px 10px; /* Comfortable touch padding */
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .cat-icon {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            margin-right: 15px;
+            flex-shrink: 0;
+        }
+        .cat-name {
+            flex-grow: 1;
+            font-size: 1rem;
+            color: #444;
+        }
+        .cat-price {
+            font-weight: bold;
+            color: #333;
+            font-size: 1rem;
+        }
+        /* Hide default Streamlit elements */
+        #MainMenu {visibility: hidden;}
+        header {visibility: hidden;}
+        </style>
+    """, unsafe_allow_html=True)
+
     st.title("📊 ダッシュボード")
     if st.button("🏠 ホームに戻る"):
         st.session_state.current_view = 'home'
         st.rerun()
 
+    # State Management for Month
+    if 'view_date' not in st.session_state:
+        st.session_state.view_date = datetime.now()
+
+    # Month Navigation
+    col_prev, col_curr, col_next = st.columns([1, 4, 1])
+    with col_prev:
+        if st.button("<", key="prev_mo"):
+            first = st.session_state.view_date.replace(day=1)
+            st.session_state.view_date = first - timedelta(days=1)
+            st.rerun()
+    with col_curr:
+        curr_str = st.session_state.view_date.strftime("%Y年 %m月")
+        st.markdown(f"<div class='month-nav'>{curr_str}</div>", unsafe_allow_html=True)
+    with col_next:
+        if st.button(">", key="next_mo"):
+            first = st.session_state.view_date.replace(day=1)
+            next_month = (first + timedelta(days=32)).replace(day=1)
+            st.session_state.view_date = next_month
+            st.rerun()
+
     user_id = st.session_state.user_id
     conn = get_db()
     
-    # 今月データ
-    today = datetime.now()
-    this_month_str = today.strftime("%Y/%m")
-    df_month = pd.read_sql("SELECT * FROM receipts WHERE user_id = ? AND year_month = ?", conn, params=(user_id, this_month_str))
+    # Get Data for Selected Month
+    view_ym = st.session_state.view_date.strftime("%Y/%m")
+    df_month = pd.read_sql("SELECT * FROM receipts WHERE user_id = ? AND year_month = ?", conn, params=(user_id, view_ym))
     
-    # 上部サマリー
-    st.subheader(f"{this_month_str} の支出状況")
+    # --- Donut Chart & List Section ---
+    total_exp = 0
     if not df_month.empty:
-        col1, col2 = st.columns(2)
-        with col1:
-            fig_pie = px.pie(df_month, values='price', names='category', hole=0.4, title="カテゴリ別割合")
-            fig_pie.update_layout(showlegend=False, margin=dict(t=30,b=0,l=0,r=0))
-            st.plotly_chart(fig_pie, use_container_width=True)
-        with col2:
-            daily_sum = df_month.groupby('date')['price'].sum().cumsum().reset_index()
-            fig_area = px.area(daily_sum, x='date', y='price', title="日次累積推移")
-            fig_area.update_layout(margin=dict(t=30,b=0,l=0,r=0))
-            st.plotly_chart(fig_area, use_container_width=True)
-    else:
-        st.info("今月のデータはありません。")
-
-    # タブ (順序変更: 一覧, 日別, 店舗別, 月別, 年別)
-    tab_list, tab_date, tab_shop, tab_month, tab_year = st.tabs(["📝 一覧", "📆 日別", "🏢 店舗別", "📅 月別", "📉 年別"])
-    
-     # 1. 一覧
-    with tab_list:
-        st.caption("※直近1ヶ月以内のデータのみ削除可能")
-        df_list = pd.read_sql("""
-            SELECT date, shop, SUM(price) as total, MIN(created_at) as created_at
-            FROM receipts WHERE user_id = ? 
-            GROUP BY date, shop 
-            ORDER BY date DESC, created_at DESC LIMIT 50
-        """, conn, params=(user_id,))
+        total_exp = df_month['price'].sum()
         
-        for _, r in df_list.iterrows():
-            with st.expander(f"{r['date']} | {r['shop']} | ¥{r['total']:,}"):
-                items = pd.read_sql("SELECT item_name, category, price FROM receipts WHERE user_id = ? AND date = ? AND shop = ?", conn, params=(user_id, r['date'], r['shop']))
-                st.dataframe(items, use_container_width=True, hide_index=True)
+        # Aggregate by category for chart
+        df_cat = df_month.groupby('category')['price'].sum().reset_index()
+        
+        # Donut Chart
+        fig = px.pie(df_cat, values='price', names='category', hole=0.5,
+                     color='category',
+                     color_discrete_map={c: get_category_color(c) for c in df_cat['category'].unique()})
+        fig.update_traces(textinfo='none', hoverinfo='label+percent+value')
+        fig.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10), height=280)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        
+        # Total Summary
+        st.markdown(f"<div class='summary-total'>合計 ¥{total_exp:,}</div>", unsafe_allow_html=True)
+        
+        # Detailed Category List
+        df_cat = df_cat.sort_values('price', ascending=False)
+        st.markdown("<div style='border-top: 1px solid #e0e0e0;'>", unsafe_allow_html=True) # Top border
+        for _, row in df_cat.iterrows():
+            cat = row['category']
+            price = row['price']
+            color = get_category_color(cat)
+            st.markdown(f"""
+            <div class='cat-list-item'>
+                <div style='display:flex; align-items:center; flex-grow:1;'>
+                    <div class='cat-icon' style='background-color: {color};'></div>
+                    <div class='cat-name'>{cat}</div>
+                </div>
+                <div class='cat-price'>¥{price:,}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True) # Close container
+        
+    else:
+        st.info(f"{view_ym} のデータはありません。")
+        # Empty Donut
+        fig = px.pie(values=[1], names=['なし'], hole=0.5, color_discrete_sequence=['#eeeeee'])
+        fig.update_traces(textinfo='none', hoverinfo='skip')
+        fig.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10), height=280)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        st.markdown(f"<div class='summary-total'>合計 ¥0</div>", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # --- Tabs Section ---
+    # Order: List, Daily, Calendar, Shop, Month, Year
+    tab_list, tab_date, tab_cal, tab_shop, tab_month, tab_year = st.tabs(["📝 一覧", "📆 日別", "📅 カレンダー", "🏢 店舗別", "🌙 月別", "📉 年別"])
+    
+     # 1. 一覧 (Same as before but filtered by view_date?)
+     # Note: Original 'List' tab showed latest 50 receipts regardless of month, 
+     # but typically dashboard lists should filter by the selected month if we have month nav.
+     # However, to keep it simple and useful for deletion, I'll restrict it to the selected month 
+     # OR keep the original behavior. Let's restrict to selected month for consistency with the dashboard view.
+    with tab_list:
+        st.caption(f"{view_ym} の明細 (※カテゴリ修正可)")
+        if not df_month.empty:
+            # Group by receipt (date, shop, created_at)
+            # created_at is needed to distinguish interactions, assuming it's available.
+            # If created_at is not unique enough for batch, we might bundle by date/shop.
+            # Let's use date and shop and maybe grouping consecutive entries if possible, 
+            # but for now Unique(YearMonth, Date, Shop, CreatedAt) seems safe if imports were batched.
+            
+            # Get unique receipts
+            receipt_cols = ['date', 'shop', 'created_at']
+            df_receipts = df_month[receipt_cols].drop_duplicates().sort_values(['date', 'created_at'], ascending=[False, False])
+            
+            for _, r in df_receipts.iterrows():
+                # Filter items for this specific receipt batch
+                mask = (
+                    (df_month['date'] == r['date']) & 
+                    (df_month['shop'] == r['shop']) & 
+                    (df_month['created_at'] == r['created_at'])
+                )
+                df_items = df_month[mask].copy()
                 
-                # 削除処理
-                try:
-                    rd = datetime.strptime(r['date'], "%Y/%m/%d")
-                    if (datetime.now() - rd).days <= 30:
-                        if st.button("削除", key=f"del_{r['date']}_{r['shop']}"):
-                            c = conn.cursor()
-                            c.execute("DELETE FROM receipts WHERE user_id = ? AND date = ? AND shop = ?", (user_id, r['date'], r['shop']))
-                            conn.commit()
-                            st.rerun()
-                except: pass
+                if df_items.empty: continue
+                
+                total_receipt = df_items['price'].sum()
+                
+                # Unique Key for this receipt
+                receipt_key = f"{r['date']}_{r['shop']}_{r['created_at']}"
+                
+                with st.expander(f"{r['date']} | {r['shop']} | ¥{total_receipt:,}"):
+                    with st.form(key=f"form_{receipt_key}"):
+                        # Dynamic Key state for reset
+                        reset_key_name = f"reset_{receipt_key}"
+                        if reset_key_name not in st.session_state:
+                            st.session_state[reset_key_name] = 0
+                        
+                        # Editor
+                        edit_target = df_items[['id', 'item_name', 'price', 'category']].copy()
+                        
+                        # Dynamic key forces re-render when counter changes
+                        editor_key = f"editor_{receipt_key}_{st.session_state[reset_key_name]}"
+                        
+                        edited_df = st.data_editor(
+                            edit_target,
+                            key=editor_key,
+                            column_config={
+                                "id": None,
+                                "item_name": st.column_config.TextColumn("商品名", disabled=True),
+                                "price": st.column_config.NumberColumn("金額", format="¥%d", disabled=True),
+                                "category": st.column_config.SelectboxColumn(
+                                    "カテゴリ",
+                                    options=["食料品", "外食", "日用品", "交通費", "医療・健康", "住居費", "水道・光熱費", "通信費", "衣服・美容", "交際費", "教育・教養", "娯楽", "その他"],
+                                    required=True
+                                )
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                        
+                        c1, c2, c3 = st.columns([1, 1, 1])
+                        with c1:
+                            # Primary Action: Save
+                            if st.form_submit_button("変更を保存", type="primary"):
+                                c = conn.cursor()
+                                for _, row in edited_df.iterrows():
+                                    c.execute("UPDATE receipts SET category = ? WHERE id = ?", (row['category'], row['id']))
+                                conn.commit()
+                                # Increment reset counter to reload from DB and clear editor state "conceptually"
+                                st.session_state[reset_key_name] += 1
+                                st.toast("✅ カテゴリを保存しました")
+                                time.sleep(1)
+                                st.rerun()
+                                
+                        with c2:
+                            # Reset Action
+                            if st.form_submit_button("元に戻す"):
+                                # Increment reset counter to force fresh render from DB
+                                st.session_state[reset_key_name] += 1
+                                st.rerun()
+                                
+                        with c3:
+                            # Secondary Action: Delete
+                            if st.form_submit_button("🗑️ 削除"):
+                                c = conn.cursor()
+                                ids = tuple(df_items['id'].tolist())
+                                if len(ids) == 1:
+                                    c.execute("DELETE FROM receipts WHERE id = ?", (ids[0],))
+                                else:
+                                    c.execute(f"DELETE FROM receipts WHERE id IN ({','.join(['?']*len(ids))})", ids)
+                                conn.commit()
+                                st.toast("🗑️ 削除しました")
+                                time.sleep(1)
+                                st.rerun()
+
+        else:
+            st.info("データがありません")
 
     # Styling function
     def highlight_total(s):
         return ['background-color: #1f77b4; color: white; font-weight: bold' if s.name == '合計' else '' for _ in s]            
 
-    # 2. 日別集計 (Category x Date)
+    # 2. 日別集計 (Category x Date) - Filtered by selected month
     with tab_date:
         st.subheader("日別カテゴリー集計")
         if not df_month.empty:
             pivot_date = pd.pivot_table(df_month, index='category', columns='date', values='price', aggfunc='sum', fill_value=0)
-            # 合計行追加
             pivot_date.loc['合計'] = pivot_date.sum(numeric_only=True)
             st.dataframe(pivot_date.style.apply(highlight_total, axis=1), use_container_width=True)
         else:
             st.info("データがありません")
 
-    # 3. 店舗別集計 (Category x Shop)
+    # 3. Calendar (New!)
+    with tab_cal:
+        if not df_month.empty:
+            render_calendar(df_month, st.session_state.view_date.year, st.session_state.view_date.month)
+        else:
+            st.info("データがありません")
+
+    # 4. 店舗別集計 (Category x Shop)
     with tab_shop:
         st.subheader("店舗別カテゴリー集計")
         if not df_month.empty:
             pivot_shop = pd.pivot_table(df_month, index='category', columns='shop', values='price', aggfunc='sum', fill_value=0)
-            # 合計行追加
             pivot_shop.loc['合計'] = pivot_shop.sum(numeric_only=True)
             st.dataframe(pivot_shop.style.apply(highlight_total, axis=1), use_container_width=True)
         else:
             st.info("データがありません")
 
-    # 4. 月別集計 (Category x YearMonth)
+    # 5. 月別集計 (Category x YearMonth) - All time
     with tab_month:
-        st.subheader("月別カテゴリー集計")
+        st.subheader("月別カテゴリー集計 (全期間)")
         df_all = pd.read_sql("SELECT category, year_month, price FROM receipts WHERE user_id = ?", conn, params=(user_id,))
         if not df_all.empty:
             pivot_month = pd.pivot_table(df_all, index='category', columns='year_month', values='price', aggfunc='sum', fill_value=0)
-            # 合計行追加
             pivot_month.loc['合計'] = pivot_month.sum(numeric_only=True)
             st.dataframe(pivot_month.style.apply(highlight_total, axis=1), use_container_width=True)
         else:
             st.info("データがありません")
 
-    # 5. 年別集計 (Long Term)
+    # 6. 年別集計 (Long Term)
     with tab_year:
         st.subheader("年別カテゴリー集計 (30年保存)")
         df_hist = pd.read_sql("SELECT * FROM yearly_history WHERE user_id = ? ORDER BY year", conn, params=(user_id,))
@@ -550,7 +892,6 @@ def show_dashboard():
             st.plotly_chart(fig_hist, use_container_width=True)
             
             pivot_hist = pd.pivot_table(df_hist, index='category', columns='year', values='total_amount', aggfunc='sum', fill_value=0)
-            # 合計行追加
             pivot_hist.loc['合計'] = pivot_hist.sum(numeric_only=True)
             st.dataframe(pivot_hist.style.apply(highlight_total, axis=1), use_container_width=True)
         else:
@@ -637,6 +978,9 @@ def main():
         if st.button("ログアウト", type="primary"):
             st.session_state.clear()
             st.rerun()
+            
+            st.session_state.current_view = 'upload'
+            st.rerun()
 
     # ビューのルーティング
     if 'current_view' not in st.session_state:
@@ -651,6 +995,7 @@ def main():
         show_manual_input(model_name)
     elif view == 'upload':
         show_file_input(model_name)
+    # v3.0: dashboard is home
     elif view == 'dashboard':
         show_dashboard()
     elif view == 'help':
