@@ -467,6 +467,8 @@ def get_category_color(category):
     }
     return colors.get(category, "#eeeeee")
 
+
+    
 def create_calendar_html(df_month, year, month):
     # helper for date normalization
     def normalize_date(d):
@@ -566,7 +568,7 @@ def create_calendar_html(df_month, year, month):
                 """
     html += '</div>'
     return html
-    
+
 def show_dashboard():
     # --- Handle Query Params for Date Selection (Runs first) ---
     qp_date = None
@@ -733,15 +735,8 @@ def show_dashboard():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # --- Tabs Section ---
-    # Dynamic Tab Ordering: Put Calendar First if date is selected
+    # --- Tabs Section ---
     default_tabs = ["📝 一覧", "📆 日別", "📅 カレンダー", "🏢 店舗別", "🌙 月別", "📉 年別"]
-    
-    # Check if we should prioritize calendar
-    if qp_date:
-        # Move Calendar to front
-        if "📅 カレンダー" in default_tabs: # Ensure it exists before removing
-            default_tabs.remove("📅 カレンダー")
-        default_tabs.insert(0, "📅 カレンダー")
         
     # Create Tabs
     tabs = st.tabs(default_tabs)
@@ -830,6 +825,9 @@ def show_dashboard():
         else:
             st.info("データがありません")
 
+
+
+
     # 3. Calendar (New!)
     with tab_map["📅 カレンダー"]:
         if not df_month.empty:
@@ -849,37 +847,60 @@ def show_dashboard():
                         st.subheader(f"📅 {sel_date} の詳細")
                         
                         # Filter dataframe
-                        # df_month['date'] is YYYY/MM/DD based on analyze_and_save logic
-                        # But wait, in render_calendar we were doing:
-                        # df_detail['temp_date_str'] = df_detail['date'].astype(str).str.replace('-', '/')
-                        # Let's verify data format. 
-                        # analyze_and_save saves as YYYY/MM/DD.
-                        # pd.read_sql might return it as string.
-                        # To be safe against YYYY-MM-DD from other sources or sqlite auto-formatting:
-                        
                         df_month['temp_date_str'] = df_month['date'].astype(str).str.replace('-', '/')
                         day_data = df_month[df_month['temp_date_str'] == sel_date].copy()
                         
+
                         if not day_data.empty:
                             day_total = day_data['price'].sum()
-                            st.markdown(f"**合計: :red[¥{day_total:,}]**")
                             
-                            # Display as a clean dataframe
-                            disp_df = day_data[['category', 'shop', 'item_name', 'price']].copy()
-                            disp_df.columns = ['カテゴリ', '場所', '商品名', '金額']
-                            # Sort by price desc
-                            disp_df = disp_df.sort_values('金額', ascending=False)
+                            # Aggregate by Category and Shop
+                            df_summary = day_data.groupby(['category', 'shop'])['price'].sum().reset_index()
+                            df_summary = df_summary.sort_values('price', ascending=False)
                             
-                            st.dataframe(
-                                disp_df, 
-                                use_container_width=True, 
-                                hide_index=True,
-                                column_config={
-                                    "金額": st.column_config.NumberColumn(format="¥%d")
-                                }
-                            )
+                            # Render
+                            st.markdown(f"""
+                            <div style="
+                                border: 2px solid #ddd; 
+                                border-radius: 10px; 
+                                padding: 15px; 
+                                margin-top: 10px; 
+                                background-color: white;
+                            ">
+                                <div style="
+                                    text-align: center; 
+                                    font-size: 1.2rem; 
+                                    font-weight: bold; 
+                                    margin-bottom: 15px; 
+                                    border-bottom: 1px solid #eee; 
+                                    padding-bottom: 10px;
+                                ">
+                                    {sel_date} 合計: <span style="color: #d32f2f;">¥{day_total:,}</span>
+                                </div>
+                                <div style="display: flex; flex-direction: column; gap: 8px;">
+                                    {''.join([
+                                        f'''
+                                        <div style="
+                                            display: flex; 
+                                            justify-content: space-between; 
+                                            align-items: center; 
+                                            padding: 8px 0; 
+                                            border-bottom: 1px dashed #eee;
+                                        ">
+                                            <div style="font-size: 1rem; color: #333;">
+                                                {row['category']} <span style="font-size: 0.85rem; color: #666;">({row['shop']})</span>
+                                            </div>
+                                            <div style="font-weight: bold; color: #333;">¥{row['price']:,}</div>
+                                        </div>
+                                        ''' for _, row in df_summary.iterrows()
+                                    ])}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
                         else:
                              st.info("データがありません")
+
                 except:
                      pass
         else:
