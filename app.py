@@ -469,13 +469,22 @@ def get_category_color(category):
 
 def render_calendar(df_month, year, month):
     # Handle Query Params for Date Selection
+    qp_date = None
     try:
-        # Use try-except for compatibility or safe access
-        qp = st.query_params
-        if "sel_date" in qp:
-            st.session_state['selected_cal_date'] = qp["sel_date"]
-    except Exception:
-        pass
+        # Streamlit >= 1.30
+        if "sel_date" in st.query_params:
+            qp_date = st.query_params["sel_date"]
+    except:
+        try:
+            # Fallback for older Streamlit
+            qps = st.experimental_get_query_params()
+            if "sel_date" in qps:
+                qp_date = qps["sel_date"][0] 
+        except:
+            pass
+            
+    if qp_date:
+        st.session_state['selected_cal_date'] = qp_date
 
     # Calendar implementation
     st.subheader(f"{year}年{month}月 カレンダー")
