@@ -16,7 +16,7 @@ import streamlit.components.v1 as components
 
 # --- 1. アプリケーション設定 ---
 st.set_page_config(
-    page_title="AI家計簿 Ver 3.03",
+    page_title="AI家計簿 Ver 3.04",
     page_icon="💰",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -316,7 +316,7 @@ def show_home(username):
     st.title("🏠 AI家計簿 Pro - ホーム")
     col_title, col_help = st.columns([0.8, 0.2])
     with col_title:
-        st.write(f"ようこそ、**{username}** さん ( Ver 3.03 )")
+        st.write(f"ようこそ、**{username}** さん ( Ver 3.04 )")
     with col_help:
 
         if st.button("❓ ヘルプ", use_container_width=True):
@@ -621,75 +621,6 @@ def render_calendar(df_month, year, month):
     # Render using components.html as recommended
     components.html(calendar_html, height=600, scrolling=True)
     
-    # Detail View Logic (Inside Calendar Tab)
-    if 'selected_cal_date' in st.session_state:
-        selected_date = st.session_state['selected_cal_date']
-        try:
-            # Check if selected date matches current view (YYYY/MM)
-            sel_y, sel_m, _ = map(int, selected_date.split('/'))
-            if sel_y == year and sel_m == month:
-                # Filter data
-                df_month['temp_date_filter'] = df_month['date'].astype(str).str.replace('-', '/')
-                day_data = df_month[df_month['temp_date_filter'] == selected_date].copy()
-                
-                if not day_data.empty:
-                    day_total = day_data['price'].sum()
-                    
-                    # Summary by Category/Shop
-                    summary_df = day_data.groupby(['category', 'shop'])['price'].sum().reset_index().sort_values('price', ascending=False)
-                    
-                    # Build Detail HTML (This can remain st.markdown as it is outside iframe)
-                    detail_html = f"""
-                    <style>
-                    .detail-card {{
-                        border: 2px solid #5C6BC0;
-                        border-radius: 8px;
-                        padding: 20px;
-                        margin-top: 20px;
-                        background-color: #E8EAF6;
-                        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-                    }}
-                    .detail-title {{
-                        font-size: 1.2rem;
-                        font-weight: bold;
-                        margin-bottom: 15px;
-                        padding-bottom: 10px;
-                        border-bottom: 2px solid #C5CAE9;
-                        color: #1A237E;
-                    }}
-                    .detail-row {{
-                        display: flex; 
-                        justify-content: space-between; 
-                        align-items: center;
-                        padding: 8px 0;
-                        border-bottom: 1px dotted #ccc;
-                    }}
-                    </style>
-                    <div class="detail-card">
-                        <div class="detail-title">📅 {selected_date} の詳細 (合計: <span style="color:#d32f2f;">¥{day_total:,}</span>)</div>
-                    """
-                    
-                    for _, row in summary_df.iterrows():
-                        cat = row['category']
-                        shop = row['shop'] if row['shop'] else "不明"
-                        price = row['price']
-                        
-                        label = f"{cat}（{shop}）"
-                        
-                        detail_html += f"""
-                        <div class="detail-row">
-                            <div style="font-weight:bold; color:#333;">{label}</div>
-                            <div style="font-weight:bold; color:#333;">¥{price:,}</div>
-                        </div>
-                        """
-                    
-                    detail_html += "</div>"
-                    st.markdown(detail_html, unsafe_allow_html=True)
-                else:
-                    st.info(f"{selected_date} の支出はありません。")
-        except ValueError:
-            pass
-    
 def show_dashboard():
     # --- Handle Query Params for Date Selection (Runs first) ---
     qp_date = None
@@ -774,7 +705,7 @@ def show_dashboard():
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("📊 ダッシュボード Ver 3.03")
+    st.title("📊 ダッシュボード Ver 3.04")
     if st.button("🏠 ホームに戻る"):
         st.session_state.current_view = 'home'
         st.rerun()
@@ -905,24 +836,37 @@ def show_dashboard():
                                 "category": st.column_config.SelectboxColumn("カテゴリ", options=["食料品", "外食", "日用品", "交通費", "医療・健康", "住居費", "水道・光熱費", "通信費", "衣服・美容", "交際費", "教育・教養", "娯楽", "その他"], required=True)
                             }, hide_index=True, use_container_width=True
                         )
+                        # Re-implementation of form buttons to ensure strict nesting
                         c1, c2, c3 = st.columns([1, 1, 1])
+                        
                         with c1:
                             if st.form_submit_button("変更を保存", type="primary"):
                                 c = conn.cursor()
-                                for _, row in edited_df.iterrows(): c.execute("UPDATE receipts SET category = ? WHERE id = ?", (row['category'], row['id']))
+                                for _, row in edited_df.iterrows():
+                                    c.execute("UPDATE receipts SET category = ? WHERE id = ?", (row['category'], row['id']))
                                 conn.commit()
                                 st.session_state[reset_key_name] += 1
-                                st.toast("✅ カテゴリを保存しました"); time.sleep(1); st.rerun()
+                                st.toast("✅ カテゴリを保存しました")
+                                time.sleep(1)
+                                st.rerun()
+                                
                         with c2:
-                            if st.form_submit_button("元に戻す"): st.session_state[reset_key_name] += 1; st.rerun()
+                            if st.form_submit_button("元に戻す"):
+                                st.session_state[reset_key_name] += 1
+                                st.rerun()
+                                
                         with c3:
                             if st.form_submit_button("🗑️ 削除"):
                                 c = conn.cursor()
                                 ids = tuple(df_items['id'].tolist())
-                                if len(ids) == 1: c.execute("DELETE FROM receipts WHERE id = ?", (ids[0],))
-                                else: c.execute(f"DELETE FROM receipts WHERE id IN ({','.join(['?']*len(ids))})", ids)
+                                if len(ids) == 1:
+                                    c.execute("DELETE FROM receipts WHERE id = ?", (ids[0],))
+                                else:
+                                    c.execute(f"DELETE FROM receipts WHERE id IN ({','.join(['?']*len(ids))})", ids)
                                 conn.commit()
-                                st.toast("🗑️ 削除しました"); time.sleep(1); st.rerun()
+                                st.toast("🗑️ 削除しました")
+                                time.sleep(1)
+                                st.rerun()
         else:
             st.info("データがありません")
 
