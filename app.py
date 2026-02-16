@@ -9,6 +9,8 @@ import tempfile
 import time
 import bcrypt
 import plotly.express as px
+from PIL import Image
+import io
 
 # --- 1. アプリケーション設定 ---
 st.set_page_config(
@@ -49,11 +51,18 @@ def init_db():
             price INTEGER,
             cumulative_price INTEGER,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            image_path TEXT,
             FOREIGN KEY(user_id) REFERENCES users(id)
         )
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_mid_date ON receipts(user_id, date)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_mid_ym ON receipts(user_id, year_month)")
+    
+    # Schema Migration for 'image_path'
+    try:
+        c.execute("ALTER TABLE receipts ADD COLUMN image_path TEXT")
+    except:
+        pass
     
     # Yearly History (30年保存)
     c.execute("""
@@ -156,6 +165,30 @@ def update_yearly_history(user_id, receipt_date_str):
     except Exception as e:
         print(f"Aggregation Error: {e}")
 
+# --- 4.5 画像処理 ---
+def resize_image(image_file):
+    try:
+        img = Image.open(image_file)
+        # Convert to RGB if necessary (e.g. for RGBA/P palette)
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+            
+        # Resize if long edge > 1280
+        max_size = 1280
+        if max(img.size) > max_size:
+            ratio = max_size / max(img.size)
+            new_size = (int(img.width * ratio), int(img.height * ratio))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+            
+        # Save to buffer
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        buf.seek(0)
+        return buf
+    except Exception as e:
+        st.error(f"画像処理エラー: {e}")
+        return None
+
 # --- 5. AI解析 & データ保存 ---
 def configure_genai():
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -165,34 +198,45 @@ def configure_genai():
         genai.configure(api_key=api_key)
 
 def analyze_and_save(model_name, uploaded_file):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
-        tmp.write(uploaded_file.getvalue())
+    # 1. 画像リサイズ & 軽量化
+    resized_image_buffer = resize_image(uploaded_file)
+    if not resized_image_buffer: return False
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+        tmp.write(resized_image_buffer.getvalue())
         tmp_path = tmp.name
 
     try:
-        myfile = genai.upload_file(tmp_path)
+        myfile = genai.upload_file(tmp_path, mime_type="image/jpeg")
         while myfile.state.name == "PROCESSING":
             time.sleep(1)
             myfile = genai.get_file(myfile.name)
             
         model = genai.GenerativeModel(model_name)
         prompt = """
-        レシート画像を解析し、以下のJSON形式(List)のみを出力してください。
+        レシートまたは医療費領収書画像を解析し、以下のJSON形式(List)のみを出力してください。
         
         [
             {
                 "date": "YYYY/MM/DD", 
-                "shop": "店舗名",
+                "shop": "店舗名または病院・薬局名",
+                "is_medical": boolean,
                 "items": [
-                    {"name": "商品名", "category": "カテゴリ", "price": 数値}
+                    {"name": "商品名または摘要", "category": "カテゴリ", "price": 数値}
                 ]
             }
         ]
         
-        **ルール**
-        1. 日付不明は本日。
-        2. カテゴリ分類: 「飲料」「嗜好品」「酒」「お菓子」は必ず【食料品】に変換。
-        3. 価格は数値のみ。
+        **解析ルール**
+        1. **日付**: 不明な場合は本日。
+        2. **医療費判定**: 
+           - 「領収証」「診療費」「保険薬局」などの記載がある場合は医療費とみなす。
+           - 場所(shop)は病院名・クリニック名・薬局名にする。
+           - 医療費の場合、個別の点数ではなく「請求金額(合計)」を1つの項目として抽出する。商品名は「外来診療費」や「薬剤費」などにする。
+           - カテゴリは必ず「医療・健康」にする。
+        3. **通常レシート**:
+           - カテゴリ分類: 「飲料」「嗜好品」「酒」「お菓子」は必ず【食料品】に変換。
+           - 価格は数値のみ。
         """
         
         res = model.generate_content([myfile, prompt], generation_config={"response_mime_type": "application/json"})
@@ -211,8 +255,12 @@ def analyze_and_save(model_name, uploaded_file):
             
             for idx, item in enumerate(receipt.get("items", []), 1):
                 price = int(item.get("price", 0))
-                cat = item.get("category", "その他")
-                if cat in ["飲料", "嗜好品"]: cat = "食料品"
+                # 医療費フラグがあればカテゴリ強制
+                if receipt.get("is_medical", False):
+                    cat = "医療・健康"
+                else:
+                    cat = item.get("category", "その他")
+                    if cat in ["飲料", "嗜好品"]: cat = "食料品"
                 
                 curr_cumulative += price
                 
@@ -228,7 +276,11 @@ def analyze_and_save(model_name, uploaded_file):
         return True
         
     except Exception as e:
-        st.error(f"Error: {e}")
+        error_msg = str(e)
+        if "429" in error_msg:
+            st.warning("⚠️ AIが混み合っています。10秒ほど待ってから再度お試しください。")
+        else:
+            st.error(f"解析エラー: {e}")
         return False
     finally:
         if os.path.exists(tmp_path): os.remove(tmp_path)
@@ -262,7 +314,7 @@ def show_home(username):
     st.title("🏠 AI家計簿 Pro - ホーム")
     col_title, col_help = st.columns([0.8, 0.2])
     with col_title:
-        st.write(f"ようこそ、**{username}** さん ( Ver 1.04 )")
+        st.write(f"ようこそ、**{username}** さん ( Ver 2.00 )")
     with col_help:
 
         if st.button("❓ ヘルプ", use_container_width=True):
@@ -309,7 +361,7 @@ def show_file_input(model_name):
                 st.image(uploaded_file, use_container_width=True)
             
         if st.button("AI解析実行", type="primary", use_container_width=True):
-            with st.spinner("AI解析中..."):
+            with st.spinner("AIがレシートを解析しています..."):
                 if analyze_and_save(model_name, uploaded_file):
                     st.success("登録完了！")
                     time.sleep(1.5)
@@ -425,7 +477,7 @@ def show_dashboard():
     # タブ (順序変更: 一覧, 日別, 店舗別, 月別, 年別)
     tab_list, tab_date, tab_shop, tab_month, tab_year = st.tabs(["📝 一覧", "📆 日別", "🏢 店舗別", "📅 月別", "📉 年別"])
     
-    # 1. 一覧
+     # 1. 一覧
     with tab_list:
         st.caption("※直近1ヶ月以内のデータのみ削除可能")
         df_list = pd.read_sql("""
