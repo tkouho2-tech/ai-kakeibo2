@@ -16,7 +16,7 @@ import streamlit.components.v1 as components
 
 # --- 1. アプリケーション設定 ---
 st.set_page_config(
-    page_title="AI家計簿 Ver 3.01",
+    page_title="AI家計簿 Ver 3.03",
     page_icon="💰",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -316,7 +316,7 @@ def show_home(username):
     st.title("🏠 AI家計簿 Pro - ホーム")
     col_title, col_help = st.columns([0.8, 0.2])
     with col_title:
-        st.write(f"ようこそ、**{username}** さん ( Ver 3.01 )")
+        st.write(f"ようこそ、**{username}** さん ( Ver 3.03 )")
     with col_help:
 
         if st.button("❓ ヘルプ", use_container_width=True):
@@ -468,25 +468,6 @@ def get_category_color(category):
     return colors.get(category, "#eeeeee")
 
 def render_calendar(df_month, year, month):
-    # Handle Query Params for Date Selection
-    # Handle Query Params for Date Selection
-    qp_date = None
-    try:
-        # Streamlit >= 1.30
-        if "sel_date" in st.query_params:
-            qp_date = st.query_params["sel_date"]
-    except:
-        try:
-            # Fallback for older Streamlit
-            qps = st.experimental_get_query_params()
-            if "sel_date" in qps:
-                qp_date = qps["sel_date"][0] 
-        except:
-            pass
-            
-    if qp_date:
-        st.session_state['selected_cal_date'] = qp_date
-
     # Calendar implementation
     st.subheader(f"{year}年{month}月 カレンダー")
     
@@ -599,76 +580,31 @@ def render_calendar(df_month, year, month):
     # Render using components.html as recommended
     components.html(calendar_html, height=600, scrolling=True)
     
-    # Detail View Logic
-    if 'selected_cal_date' in st.session_state:
-        selected_date = st.session_state['selected_cal_date']
-        try:
-            # Check if selected date matches current view (YYYY/MM)
-            sel_y, sel_m, _ = map(int, selected_date.split('/'))
-            if sel_y == year and sel_m == month:
-                # Filter data
-                df_month['temp_date_filter'] = df_month['date'].astype(str).str.replace('-', '/')
-                day_data = df_month[df_month['temp_date_filter'] == selected_date].copy()
-                
-                if not day_data.empty:
-                    day_total = day_data['price'].sum()
-                    
-                    # Summary by Category/Shop
-                    summary_df = day_data.groupby(['category', 'shop'])['price'].sum().reset_index().sort_values('price', ascending=False)
-                    
-                    # Build Detail HTML (This can remain st.markdown as it is outside iframe)
-                    detail_html = f"""
-                    <style>
-                    .detail-card {{
-                        border: 1px solid #ccc;
-                        border-radius: 8px;
-                        padding: 20px;
-                        margin-top: 20px;
-                        background-color: #fff;
-                        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-                    }}
-                    .detail-title {{
-                        font-size: 1.2rem;
-                        font-weight: bold;
-                        margin-bottom: 15px;
-                        padding-bottom: 10px;
-                        border-bottom: 2px solid #eee;
-                        color: #333;
-                    }}
-                    .detail-row {{
-                        display: flex; 
-                        justify-content: space-between; 
-                        align-items: center;
-                        padding: 8px 0;
-                        border-bottom: 1px solid #f0f0f0;
-                    }}
-                    </style>
-                    <div class="detail-card">
-                        <div class="detail-title">📅 {selected_date} の詳細 (合計: <span style="color:#d32f2f;">¥{day_total:,}</span>)</div>
-                    """
-                    
-                    for _, row in summary_df.iterrows():
-                        cat = row['category']
-                        shop = row['shop'] if row['shop'] else "詳細なし"
-                        price = row['price']
-                        
-                        label = f"{cat}（{shop}）"
-                        
-                        detail_html += f"""
-                        <div class="detail-row">
-                            <div style="font-weight:bold; color:#333;">{label}</div>
-                            <div style="font-weight:bold; color:#333;">¥{price:,}</div>
-                        </div>
-                        """
-                    
-                    detail_html += "</div>"
-                    st.markdown(detail_html, unsafe_allow_html=True)
-                else:
-                    st.info(f"{selected_date} の支出はありません。")
-        except ValueError:
-            pass
-
 def show_dashboard():
+    # --- Handle Query Params for Date Selection (Runs first) ---
+    qp_date = None
+    try:
+        # Streamlit >= 1.30
+        if "sel_date" in st.query_params:
+            qp_date = st.query_params["sel_date"]
+    except:
+        try:
+            # Fallback for older Streamlit
+            qps = st.experimental_get_query_params()
+            if "sel_date" in qps:
+                qp_date = qps["sel_date"][0] 
+        except:
+            pass
+            
+    if qp_date:
+        st.session_state['selected_cal_date'] = qp_date
+        # Force update view_date to match selected date so data is loaded
+        try:
+             dt_sel = datetime.strptime(qp_date, "%Y/%m/%d")
+             st.session_state['view_date'] = dt_sel
+        except:
+             pass
+
     # CSS Injection for Modern Theme and List
     st.markdown("""
         <style>
@@ -728,7 +664,7 @@ def show_dashboard():
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("📊 ダッシュボード Ver 3.01")
+    st.title("📊 ダッシュボード Ver 3.03")
     if st.button("🏠 ホームに戻る"):
         st.session_state.current_view = 'home'
         st.rerun()
