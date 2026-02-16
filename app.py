@@ -467,130 +467,187 @@ def get_category_color(category):
     return colors.get(category, "#eeeeee")
 
 def render_calendar(df_month, year, month):
+    # Handle Query Params for Date Selection
+    try:
+        # Use try-except for compatibility or safe access
+        qp = st.query_params
+        if "sel_date" in qp:
+            st.session_state['selected_cal_date'] = qp["sel_date"]
+    except Exception:
+        pass
+
     # Calendar implementation
-    # df_month should have 'date' and 'price'
     st.subheader(f"{year}年{month}月 カレンダー")
     
-    # Create a dictionary of date -> total price
-    daily_totals = df_month.groupby('date')['price'].sum().to_dict()
+    # helper for date normalization
+    def normalize_date(d):
+        return str(d).replace('-', '/')
+
+    # Create daily totals dict
+    daily_totals = {}
+    if not df_month.empty:
+        temp_df = df_month.copy()
+        temp_df['date_str'] = temp_df['date'].apply(normalize_date)
+        daily_totals = temp_df.groupby('date_str')['price'].sum().to_dict()
     
     # Calendar module setup
     cal = calendar.Calendar(firstweekday=6) # Sunday start
     month_days = cal.monthdayscalendar(year, month)
     
-    # Custom CSS for Button Grid and Colors
-    # Note: Streamlit buttons are hard to style individually based on value (red text).
-    # We will use CSS to color the headers (Sun=Red, Sat=Blue).
+    # Custom CSS for HTML Grid
     st.markdown("""
         <style>
-        /* Header Colors */
-        div[data-testid="stColumn"] > div > div > div > p {
-            font-size: 1rem;
+        .cal-container {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 5px;
+            margin-bottom: 20px;
         }
-        /* Grid Button Sizing */
-        div[data-testid="stColumn"] button {
+        .cal-header {
+            text-align: center;
+            font-weight: bold;
+            padding: 5px;
+        }
+        .cal-cell {
+            background-color: #ffffff;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            height: 80px;
+            position: relative;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .cal-cell:hover {
+            background-color: #f9f9f9;
+            border-color: #bbb;
+        }
+        .cal-cell-link {
+            text-decoration: none;
+            color: inherit;
+            display: block;
             width: 100%;
-            height: 80px; /* Taller for details */
-            padding: 0px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
+            height: 100%;
+        }
+        .cal-date-label {
+            position: absolute;
+            top: 5px;
+            left: 8px;
+            font-weight: bold;
+            font-size: 1rem;
+            color: #333;
+        }
+        .cal-price-label {
+            position: absolute;
+            bottom: 5px;
+            right: 8px;
+            color: #d32f2f;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+        .detail-card {
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+            background-color: #fff;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .detail-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #eee;
+            color: #333;
+        }
+        .detail-row {
+            display: flex; 
+            justify-content: space-between; 
             align-items: center;
-            line-height: 1.2;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
         }
         </style>
     """, unsafe_allow_html=True)
     
     # Headers
-    cols = st.columns(7)
     weekdays = ["日", "月", "火", "水", "木", "金", "土"]
-    colors = ["#d32f2f", "#333", "#333", "#333", "#333", "#333", "#1976d2"] # Sun=Red, Sat=Blue
+    colors = ["#d32f2f", "#333", "#333", "#333", "#333", "#333", "#1976d2"]
     
+    # Build HTML for Grid
+    calendar_html = '<div class="cal-container">'
+    
+    # Header Row
     for i, w in enumerate(weekdays):
-        cols[i].markdown(f"<div style='text-align:center; font-weight:bold; color:{colors[i]};'>{w}</div>", unsafe_allow_html=True)
-        
-    # Days
-    for week in month_days:
-        cols = st.columns(7)
-        for i, day in enumerate(week):
-            with cols[i]:
-                if day == 0:
-                    st.write("")
-                else:
-                    date_str = f"{year}/{month:02d}/{day:02d}"
-                    total = daily_totals.get(date_str, 0)
-                    
-                    # Label Construction
-                    # Day (Standard)
-                    # If Sun or Holiday: font color red? (Hard to do inside button label in Streamlit)
-                    # We will rely on Grid Column Context for Sat/Sun.
-                    # Total: Small Red Text (Requested). 
-                    # Standard Button text is one color. We will use plain text format.
-                    
-                    label = f"{day}"
-                    if total > 0:
-                        label += f"\n¥{total:,}"
-                    
-                    # Button for each day
-                    if st.button(label, key=f"btn_cal_{year}_{month}_{day}", use_container_width=True):
-                        st.session_state['selected_cal_date'] = date_str
+        calendar_html += f'<div class="cal-header" style="color:{colors[i]};">{w}</div>'
     
-    # Detail View
+    # Days Rows
+    for week in month_days:
+        for day in week:
+            if day == 0:
+                calendar_html += '<div class="cal-cell" style="border:none; background:transparent; cursor:default;"></div>'
+            else:
+                date_str = f"{year}/{month:02d}/{day:02d}"
+                total = daily_totals.get(date_str, 0)
+                
+                price_html = f'<div class="cal-price-label">¥{total:,}</div>' if total > 0 else ""
+                
+                # Link to same page with query param
+                # Note: target="_self" prevents new tab opening
+                calendar_html += f"""
+                <a href="?sel_date={date_str}" target="_self" class="cal-cell-link">
+                    <div class="cal-cell">
+                        <div class="cal-date-label">{day}</div>
+                        {price_html}
+                    </div>
+                </a>
+                """
+    
+    calendar_html += '</div>' # Close container
+    st.markdown(calendar_html, unsafe_allow_html=True)
+    
+    # Detail View Logic
     if 'selected_cal_date' in st.session_state:
         selected_date = st.session_state['selected_cal_date']
-        # Verify if selected date belongs to current view month
         try:
+            # Check if selected date matches current view (YYYY/MM)
             sel_y, sel_m, _ = map(int, selected_date.split('/'))
             if sel_y == year and sel_m == month:
-                st.divider()
-                st.markdown(f"### 📅 {selected_date} の詳細")
-                
                 # Filter data
-                day_data = df_month[df_month['date'] == selected_date].copy()
+                df_month['temp_date_filter'] = df_month['date'].astype(str).str.replace('-', '/')
+                day_data = df_month[df_month['temp_date_filter'] == selected_date].copy()
                 
                 if not day_data.empty:
-                    # Total
                     day_total = day_data['price'].sum()
-                    st.markdown(f"<div style='font-size:1.5rem; font-weight:bold; color:#d32f2f; margin-bottom:10px;'>合計: ¥{day_total:,}</div>", unsafe_allow_html=True)
                     
-                    # Sorted list by price desc
-                    day_data = day_data.sort_values('price', ascending=False)
+                    # Summary by Category/Shop
+                    summary_df = day_data.groupby(['category', 'shop'])['price'].sum().reset_index().sort_values('price', ascending=False)
                     
-                    # List Format: Category (Shop) Price
-                    for _, row in day_data.iterrows():
+                    # Build Detail HTML
+                    detail_html = f"""
+                    <div class="detail-card">
+                        <div class="detail-title">📅 {selected_date} の詳細 (合計: <span style="color:#d32f2f;">¥{day_total:,}</span>)</div>
+                    """
+                    
+                    for _, row in summary_df.iterrows():
                         cat = row['category']
                         shop = row['shop'] if row['shop'] else "詳細なし"
                         price = row['price']
                         
-                        # Icon based on category (Simple mapping)
-                        icon = "🛒" # Default
-                        if cat == "食料品": icon = "🍚"
-                        elif cat == "外食": icon = "🍜"
-                        elif cat == "交通費": icon = "🚃"
-                        
-                        st.markdown(
-                            f"""
-                            <div style='
-                                padding: 10px; 
-                                border-bottom: 1px solid #eee; 
-                                display: flex; 
-                                justify-content: space-between; 
-                                align-items: center;
-                            '>
-                                <div>
-                                    <span style='font-weight:bold;'>{cat}</span>
-                                    <span style='color:#666; font-size:0.9rem;'>（{shop}）</span>
-                                </div>
-                                <div style='font-weight:bold; color:#333;'>
-                                    ¥{price:,}
-                                </div>
+                        detail_html += f"""
+                        <div class="detail-row">
+                            <div>
+                                <span style="font-weight:bold; color:#333;">{cat}</span>
+                                <span style="color:#666; font-size:0.9rem; margin-left:8px;">({shop})</span>
                             </div>
-                            """, 
-                            unsafe_allow_html=True
-                        )
-
+                            <div style="font-weight:bold; color:#333;">¥{price:,}</div>
+                        </div>
+                        """
+                    
+                    detail_html += "</div>"
+                    st.markdown(detail_html, unsafe_allow_html=True)
                 else:
-                    st.info("この日の支出はありません。")
+                    st.info(f"{selected_date} の支出はありません。")
         except ValueError:
             pass
 
