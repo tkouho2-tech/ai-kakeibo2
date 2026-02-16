@@ -16,7 +16,7 @@ import streamlit.components.v1 as components
 
 # --- 1. アプリケーション設定 ---
 st.set_page_config(
-    page_title="AI家計簿 Ver 3.04",
+    page_title="AI家計簿 Ver 3.05",
     page_icon="💰",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -316,7 +316,7 @@ def show_home(username):
     st.title("🏠 AI家計簿 Pro - ホーム")
     col_title, col_help = st.columns([0.8, 0.2])
     with col_title:
-        st.write(f"ようこそ、**{username}** さん ( Ver 3.04 )")
+        st.write(f"ようこそ、**{username}** さん ( Ver 3.05 )")
     with col_help:
 
         if st.button("❓ ヘルプ", use_container_width=True):
@@ -653,7 +653,7 @@ def show_dashboard():
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("📊 ダッシュボード Ver 3.04")
+    st.title("📊 ダッシュボード Ver 3.05")
     if st.button("🏠 ホームに戻る"):
         st.session_state.current_view = 'home'
         st.rerun()
