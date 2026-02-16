@@ -15,7 +15,7 @@ import calendar
 
 # --- 1. アプリケーション設定 ---
 st.set_page_config(
-    page_title="AI家計簿 Ver3.0",
+    page_title="AI家計簿 Ver 3.0",
     page_icon="💰",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -711,7 +711,7 @@ def show_dashboard():
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("📊 ダッシュボード v3.0")
+    st.title("📊 ダッシュボード Ver 3.0")
     if st.button("🏠 ホームに戻る"):
         st.session_state.current_view = 'home'
         st.rerun()
