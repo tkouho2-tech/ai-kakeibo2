@@ -12,6 +12,7 @@ import plotly.express as px
 from PIL import Image
 import io
 import calendar
+import streamlit.components.v1 as components
 
 # --- 1. アプリケーション設定 ---
 st.set_page_config(
@@ -315,7 +316,7 @@ def show_home(username):
     st.title("🏠 AI家計簿 Pro - ホーム")
     col_title, col_help = st.columns([0.8, 0.2])
     with col_title:
-        st.write(f"ようこそ、**{username}** さん ( Ver 2.00 )")
+        st.write(f"ようこそ、**{username}** さん ( Ver 3.00 )")
     with col_help:
 
         if st.button("❓ ヘルプ", use_container_width=True):
@@ -494,19 +495,21 @@ def render_calendar(df_month, year, month):
     cal = calendar.Calendar(firstweekday=6) # Sunday start
     month_days = cal.monthdayscalendar(year, month)
     
-    # Custom CSS for HTML Grid
-    st.markdown("""
+    # Custom CSS and Grid HTML Construction
+    css = """
         <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; }
         .cal-container {
             display: grid;
             grid-template-columns: repeat(7, 1fr);
             gap: 5px;
-            margin-bottom: 20px;
+            padding-bottom: 20px;
         }
         .cal-header {
             text-align: center;
             font-weight: bold;
             padding: 5px;
+            font-size: 0.9rem;
         }
         .cal-cell {
             background-color: #ffffff;
@@ -516,6 +519,7 @@ def render_calendar(df_month, year, month):
             position: relative;
             cursor: pointer;
             transition: background-color 0.2s;
+            box-sizing: border-box;
         }
         .cal-cell:hover {
             background-color: #f9f9f9;
@@ -544,38 +548,15 @@ def render_calendar(df_month, year, month):
             font-weight: bold;
             font-size: 0.9rem;
         }
-        .detail-card {
-            border: 1px solid #ccc;
-            border-radius: 8px;
-            padding: 20px;
-            margin-top: 20px;
-            background-color: #fff;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        }
-        .detail-title {
-            font-size: 1.2rem;
-            font-weight: bold;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #eee;
-            color: #333;
-        }
-        .detail-row {
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center;
-            padding: 8px 0;
-            border-bottom: 1px solid #f0f0f0;
-        }
         </style>
-    """, unsafe_allow_html=True)
+    """
     
     # Headers
     weekdays = ["日", "月", "火", "水", "木", "金", "土"]
     colors = ["#d32f2f", "#333", "#333", "#333", "#333", "#333", "#1976d2"]
     
     # Build HTML for Grid
-    calendar_html = '<div class="cal-container">'
+    calendar_html = css + '<div class="cal-container">'
     
     # Header Row
     for i, w in enumerate(weekdays):
@@ -593,9 +574,9 @@ def render_calendar(df_month, year, month):
                 price_html = f'<div class="cal-price-label">¥{total:,}</div>' if total > 0 else ""
                 
                 # Link to same page with query param
-                # Note: target="_self" prevents new tab opening
+                # Note: target="_top" is REQUIRED for components.html to escape iframe
                 calendar_html += f"""
-                <a href="?sel_date={date_str}" target="_self" class="cal-cell-link">
+                <a href="?sel_date={date_str}" target="_top" class="cal-cell-link">
                     <div class="cal-cell">
                         <div class="cal-date-label">{day}</div>
                         {price_html}
@@ -603,8 +584,10 @@ def render_calendar(df_month, year, month):
                 </a>
                 """
     
-    calendar_html += '</div>' # Close container
-    st.markdown(calendar_html, unsafe_allow_html=True)
+    calendar_html += '</div>'
+    
+    # Render using components.html as recommended
+    components.html(calendar_html, height=600, scrolling=True)
     
     # Detail View Logic
     if 'selected_cal_date' in st.session_state:
@@ -623,8 +606,33 @@ def render_calendar(df_month, year, month):
                     # Summary by Category/Shop
                     summary_df = day_data.groupby(['category', 'shop'])['price'].sum().reset_index().sort_values('price', ascending=False)
                     
-                    # Build Detail HTML
+                    # Build Detail HTML (This can remain st.markdown as it is outside iframe)
                     detail_html = f"""
+                    <style>
+                    .detail-card {{
+                        border: 1px solid #ccc;
+                        border-radius: 8px;
+                        padding: 20px;
+                        margin-top: 20px;
+                        background-color: #fff;
+                        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+                    }}
+                    .detail-title {{
+                        font-size: 1.2rem;
+                        font-weight: bold;
+                        margin-bottom: 15px;
+                        padding-bottom: 10px;
+                        border-bottom: 2px solid #eee;
+                        color: #333;
+                    }}
+                    .detail-row {{
+                        display: flex; 
+                        justify-content: space-between; 
+                        align-items: center;
+                        padding: 8px 0;
+                        border-bottom: 1px solid #f0f0f0;
+                    }}
+                    </style>
                     <div class="detail-card">
                         <div class="detail-title">📅 {selected_date} の詳細 (合計: <span style="color:#d32f2f;">¥{day_total:,}</span>)</div>
                     """
@@ -634,12 +642,11 @@ def render_calendar(df_month, year, month):
                         shop = row['shop'] if row['shop'] else "詳細なし"
                         price = row['price']
                         
+                        label = f"{cat}（{shop}）"
+                        
                         detail_html += f"""
                         <div class="detail-row">
-                            <div>
-                                <span style="font-weight:bold; color:#333;">{cat}</span>
-                                <span style="color:#666; font-size:0.9rem; margin-left:8px;">({shop})</span>
-                            </div>
+                            <div style="font-weight:bold; color:#333;">{label}</div>
                             <div style="font-weight:bold; color:#333;">¥{price:,}</div>
                         </div>
                         """
@@ -806,9 +813,6 @@ def show_dashboard():
         if not df_month.empty:
             # Group by receipt (date, shop, created_at)
             # created_at is needed to distinguish interactions, assuming it's available.
-            # If created_at is not unique enough for batch, we might bundle by date/shop.
-            # Let's use date and shop and maybe grouping consecutive entries if possible, 
-            # but for now Unique(YearMonth, Date, Shop, CreatedAt) seems safe if imports were batched.
             
             # Get unique receipts
             receipt_cols = ['date', 'shop', 'created_at']
@@ -860,29 +864,25 @@ def show_dashboard():
                             use_container_width=True
                         )
                         
+                        # Buttons inside the form
                         c1, c2, c3 = st.columns([1, 1, 1])
                         with c1:
-                            # Primary Action: Save
                             if st.form_submit_button("変更を保存", type="primary"):
                                 c = conn.cursor()
                                 for _, row in edited_df.iterrows():
                                     c.execute("UPDATE receipts SET category = ? WHERE id = ?", (row['category'], row['id']))
                                 conn.commit()
-                                # Increment reset counter to reload from DB and clear editor state "conceptually"
                                 st.session_state[reset_key_name] += 1
                                 st.toast("✅ カテゴリを保存しました")
                                 time.sleep(1)
                                 st.rerun()
                                 
                         with c2:
-                            # Reset Action
                             if st.form_submit_button("元に戻す"):
-                                # Increment reset counter to force fresh render from DB
                                 st.session_state[reset_key_name] += 1
                                 st.rerun()
                                 
                         with c3:
-                            # Secondary Action: Delete
                             if st.form_submit_button("🗑️ 削除"):
                                 c = conn.cursor()
                                 ids = tuple(df_items['id'].tolist())
