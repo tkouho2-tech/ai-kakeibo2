@@ -16,7 +16,7 @@ import streamlit.components.v1 as components
 
 # --- 1. アプリケーション設定 ---
 st.set_page_config(
-    page_title="AI家計簿 Ver 3.0",
+    page_title="AI家計簿 Ver 3.01",
     page_icon="💰",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -316,7 +316,7 @@ def show_home(username):
     st.title("🏠 AI家計簿 Pro - ホーム")
     col_title, col_help = st.columns([0.8, 0.2])
     with col_title:
-        st.write(f"ようこそ、**{username}** さん ( Ver 3.00 )")
+        st.write(f"ようこそ、**{username}** さん ( Ver 3.01 )")
     with col_help:
 
         if st.button("❓ ヘルプ", use_container_width=True):
@@ -468,6 +468,7 @@ def get_category_color(category):
     return colors.get(category, "#eeeeee")
 
 def render_calendar(df_month, year, month):
+    # Handle Query Params for Date Selection
     # Handle Query Params for Date Selection
     qp_date = None
     try:
@@ -727,7 +728,7 @@ def show_dashboard():
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("📊 ダッシュボード Ver 3.0")
+    st.title("📊 ダッシュボード Ver 3.01")
     if st.button("🏠 ホームに戻る"):
         st.session_state.current_view = 'home'
         st.rerun()
@@ -807,6 +808,80 @@ def show_dashboard():
         st.markdown(f"<div class='summary-total'>合計 ¥0</div>", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
+
+    # --- Global Detail View (Visible across tabs) ---
+    if 'selected_cal_date' in st.session_state:
+        selected_date = st.session_state['selected_cal_date']
+        try:
+            # Check if selected date matches current view (YYYY/MM) - Or simplified to just show if data exists
+            # We filter df_month again just to be sure, or better, query DB? df_month is already filtered by view_date.
+            # If selected_date is not in this month, user might be confused, but let's assume month nav handles general view.
+            # Actually, if user clicks date in calendar, the page reloads with current view_date.
+            
+            sel_y, sel_m, _ = map(int, selected_date.split('/'))
+            if sel_y == st.session_state.view_date.year and sel_m == st.session_state.view_date.month:
+                # Filter data
+                df_detail = df_month.copy()
+                df_detail['temp_date_str'] = df_detail['date'].astype(str).str.replace('-', '/')
+                day_data = df_detail[df_detail['temp_date_str'] == selected_date]
+                
+                if not day_data.empty:
+                    day_total = day_data['price'].sum()
+                    
+                    # Summary by Category/Shop
+                    summary_df = day_data.groupby(['category', 'shop'])['price'].sum().reset_index().sort_values('price', ascending=False)
+                    
+                    # Styled Container for Details
+                    st.markdown(f"""
+                    <style>
+                    .detail-box {{
+                        border: 2px solid #5C6BC0;
+                        border-radius: 8px;
+                        padding: 15px;
+                        background-color: #E8EAF6;
+                        margin-bottom: 20px;
+                    }}
+                    .detail-header {{
+                        font-size: 1.1rem;
+                        font-weight: bold;
+                        color: #1A237E;
+                        border-bottom: 1px solid #C5CAE9;
+                        padding-bottom: 5px;
+                        margin-bottom: 10px;
+                        display: flex;
+                        justify-content: space-between;
+                    }}
+                    .detail-item {{
+                        display: flex;
+                        justify-content: space-between;
+                        padding: 4px 0;
+                        border-bottom: 1px dotted #ccc;
+                    }}
+                    </style>
+                    <div class="detail-box">
+                        <div class="detail-header">
+                            <span>📅 {selected_date} の詳細</span>
+                            <span style="color:#d32f2f;">合計: ¥{day_total:,}</span>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    for _, row in summary_df.iterrows():
+                        cat = row['category']
+                        shop = row['shop'] if row['shop'] else "不明"
+                        price = row['price']
+                        label = f"{cat}（{shop}）"
+                        st.markdown(f"""
+                        <div class="detail-item">
+                            <span style="font-weight:bold; color:#333;">{label}</span>
+                            <span style="font-weight:bold; color:#333;">¥{price:,}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    st.markdown("</div>", unsafe_allow_html=True)
+                else:
+                    st.info(f"{selected_date} の支出記録はありません。")
+        except:
+            pass
 
     # --- Tabs Section ---
     # Order: List, Daily, Calendar, Shop, Month, Year
